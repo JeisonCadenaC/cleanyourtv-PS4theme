@@ -21,3 +21,25 @@ bench-results/
 *.aab
 launcher/hs_err_pid*.log
 launcher/replay_pid*.log
+
+# Android platform-tools extracted at the repo root by hand (adb.exe, fastboot.exe and the rest of the
+# same zip): local only, never commit (see CLAUDE.md). instalar.ps1/instalar.sh keep their own copy
+# under %LOCALAPPDATA%/CleanYourTV-PS4 or ~/.local/share/CleanYourTV-PS4 instead.
+/adb.exe
+/fastboot.exe
+/AdbWinApi.dll
+/AdbWinUsbApi.dll
+/libwinpthread-1.dll
+/etc1tool.exe
+/hprof-conv.exe
+/make_f2fs.exe
+/make_f2fs_casefold.exe
+/mke2fs.exe
+/mke2fs.conf
+/sqlite3.exe
+/NOTICE.txt
+/source.properties
+
+# Design references kept locally while building a theme (e.g. real PS4 screenshots): never redistribute
+# someone else's copyrighted UI.
+/references/

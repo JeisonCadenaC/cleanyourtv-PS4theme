@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/JeisonCadenaC/cleanyourtv-PS4theme">Repositorio de este fork</a> ·
+  <a href="docs/ps4-theme/TUTORIAL.md"><strong>Tutorial paso a paso</strong></a> ·
   <a href="docs/ps4-theme.md">Guía detallada</a> ·
   <a href="https://github.com/Gathin23/CleanYourTV">Proyecto base CleanYourTV</a>
 </p>
@@ -117,7 +118,27 @@ Este proyecto no es para Tizen, webOS, Roku OS, VIDAA ni televisores sin Android
 permiso `INTERNET` al launcher. La instalación no es una limpieza general del televisor: este README se centra
 en el launcher y su interfaz PS4.
 
-## Instalación en Windows
+## Instalación en un paso (recomendado para cualquier persona)
+
+No necesitas saber programación ni usar la terminal. Un único script instala todo lo que falte en tu
+ordenador (Python, Java 17, el SDK de Android), encuentra el televisor, hace copia de seguridad, compila
+e instala el launcher y aplica tu tema, con preguntas en español en cada paso.
+
+| Sistema | Qué ejecutar |
+|---|---|
+| **Windows** | Descarga el proyecto (botón verde "Code" → "Download ZIP" en esta página), descomprime y haz doble clic en [`instalar.bat`](instalar.bat). |
+| **macOS / Linux** | `git clone https://github.com/JeisonCadenaC/cleanyourtv-PS4theme.git && cd cleanyourtv-PS4theme && ./instalar.sh` |
+
+Para deshacer todo más adelante: `desinstalar.ps1` (Windows) o `desinstalar.sh` (macOS/Linux).
+
+**Guía ilustrada paso a paso, pensada para la primera vez:
+[`docs/ps4-theme/TUTORIAL.md`](docs/ps4-theme/TUTORIAL.md)** — qué es cada menú del televisor, qué
+esperar en cada pantalla del instalador, solución de problemas y preguntas frecuentes.
+
+Las secciones siguientes explican la instalación manual, paso por paso, para quien prefiera controlar
+cada comando o entender qué hace el instalador automático por dentro.
+
+## Instalación manual
 
 ### 1. Clonar este fork
 

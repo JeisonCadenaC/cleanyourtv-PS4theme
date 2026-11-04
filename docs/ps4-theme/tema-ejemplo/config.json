@@ -1,0 +1,10 @@
+{
+  "ps4_layout": true,
+  "ps4_accent": "auto",
+  "ps4_idle_seconds": 10,
+  "ps4_sounds": true,
+  "ps4_user_name": "",
+  "wallpaper": true,
+  "wallpaper_true_color": true,
+  "clock_format": "system"
+}

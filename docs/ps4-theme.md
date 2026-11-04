@@ -9,6 +9,10 @@ Las imágenes de este repositorio se tomaron con ADB y se prepararon para public
 personales, de red, reproducción y notificaciones se sustituyeron por contenido de ejemplo. No se incluyen
 capturas de referencia de Sony ni fondos oficiales.
 
+> Si es tu primera vez y prefieres una guía ilustrada que no da por hecho ningún conocimiento previo
+> (incluye cómo activar la depuración en el televisor y un instalador que lo hace todo por ti), lee
+> [`docs/ps4-theme/TUTORIAL.md`](ps4-theme/TUTORIAL.md). Esta página es la referencia técnica corta.
+
 ## Activar
 
 El modo es optativo y se activa desde el archivo `config.json` de un tema. Añade estas claves a tu tema o
@@ -53,6 +57,10 @@ Guarda el archivo `config.json` en una carpeta de tema y envíala al televisor:
 
 Para quitar el tema del televisor, ejecuta `.\tools\theme.ps1 -TvHost 192.168.1.50 -Reset`. En Linux y
 macOS, usa los scripts equivalentes `launcher/build-and-install.sh` y `tools/theme.sh`.
+
+Si prefieres no instalar Java ni el SDK de Android a mano, `instalar.bat` (Windows) e `instalar.sh`
+(Linux/macOS), en la raíz del repositorio, hacen todos los pasos anteriores por ti, incluida la
+detección del televisor y la copia de seguridad; ver [`TUTORIAL.md`](ps4-theme/TUTORIAL.md).
 
 ## Opciones del tema
 
