@@ -6,6 +6,10 @@
   Read in: <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">正體中文</a> · <a href="README.vi.md">Tiếng Việt</a> · <a href="README.ja.md">日本語</a> · <a href="README.it.md">Italiano</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.nl.md">Nederlands</a> · <a href="README.de.md">Deutsch</a> · <a href="README.uk.md">Українська</a> · <a href="README.tr.md">Türkçe</a>
 </p>
 
+> **Fork notice:** This is an unofficial fork of [Gathin23/CleanYourTV](https://github.com/Gathin23/CleanYourTV),
+> maintained by [JeisonCadenaC](https://github.com/JeisonCadenaC). It adds an optional PS4-inspired launcher
+> mode; see [the fork guide](docs/ps4-theme.md) for what changed, setup, and credits. It is not affiliated with Sony.
+
 <p align="center">
   <a href="https://github.com/Gathin23/cleanyourtv/stargazers"><img src="https://img.shields.io/github/stars/Gathin23/cleanyourtv?style=flat&cacheSeconds=1800&color=cfffcf&labelColor=15181e" alt="Stars"></a>
   <a href="https://github.com/Gathin23/cleanyourtv/pulls?q=is%3Amerged"><img src="https://img.shields.io/github/issues-search?query=repo%3AGathin23%2Fcleanyourtv%20is%3Apr%20is%3Amerged&style=flat&cacheSeconds=1800&label=merged%20PRs&color=cfffcf&labelColor=15181e" alt="Merged PRs"></a>
@@ -289,6 +293,7 @@ set is in [Troubleshooting](docs/TROUBLESHOOTING.md).
 | **Add-ons** | Optional apps that plug in as module cards, kept in [`addons/`](addons/) and never built into the launcher |
 | **Clock screensaver** | A drifting clock over the glow, so nothing burns in |
 | **Remote keys** | Keeps the Input, YouTube and gear buttons working after the stock launcher is gone |
+| **PS4-inspired layout (this fork)** | Optional full-screen dashboard, quick menu, app library, notifications and media card. See [the PS4 theme guide](docs/ps4-theme.md) |
 
 Themes, switches and add-ons together, with screenshots: [cleanyour.tv/addons](https://cleanyour.tv/addons).
 

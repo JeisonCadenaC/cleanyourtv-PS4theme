@@ -10,6 +10,9 @@ final class ThemeFiles {
     private static final Pattern IMAGE = Pattern.compile("[A-Za-z0-9_.-]+\\.(jpg|jpeg|png|webp)",
             Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern PS4_AVATAR = Pattern.compile("avatar\\.(jpg|jpeg|png|webp)");
+    private static final Pattern PS4_SOUND = Pattern.compile("(move|ok|back)\\.(ogg|mp3|wav)");
+
     private ThemeFiles() {}
 
     /** The path relative to the theme directory, e.g. "config.json" or "wallpapers/dusk.jpg", or null if refused. */
@@ -18,7 +21,11 @@ final class ThemeFiles {
         if (segments.size() == 1) {
             String name = segments.get(0);
             return Config.FILE_NAME.equals(name) || "wallpaper.jpg".equals(name) || "theme_revision".equals(name)
-                    ? name : null;
+                    || PS4_AVATAR.matcher(name).matches() ? name : null;
+        }
+        // The PS4 layout's own sounds (Ps4Sounds): sounds/move, ok or back.
+        if (segments.size() == 2 && "sounds".equals(segments.get(0)) && PS4_SOUND.matcher(segments.get(1)).matches()) {
+            return "sounds/" + segments.get(1);
         }
         if (segments.size() == 2 && WALLPAPERS.equals(segments.get(0))
                 && (collectionImage(segments.get(1)) || WallpaperCaptions.FILE_NAME.equals(segments.get(1)))) {

@@ -266,7 +266,8 @@ public class HomeKeyService extends AccessibilityService {
         // The stock launcher handled the remote's Settings button; with it disabled the button does nothing.
         if (isSettingsKey(event)) {
             if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) {
-                Intent open = settingsPanel ? new Intent(this, QuickSettingsActivity.class)
+                Intent open = Ps4.enabled(this) ? new Intent(this, Ps4QuickMenuActivity.class)
+                        : settingsPanel ? new Intent(this, QuickSettingsActivity.class)
                         : SystemSettings.intent(this, Settings.ACTION_SETTINGS);
                 try {
                     startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -359,6 +360,13 @@ public class HomeKeyService extends AccessibilityService {
     /** The settings menu offers Restart only while this helper is bound: it opens the system power menu. */
     static boolean canOpenPowerMenu() {
         return running != null;
+    }
+
+    /** Standby (the PS4 Quick Menu's rest mode): the lock-screen global action, Android 9 and newer. */
+    static boolean sleep() {
+        HomeKeyService service = running;
+        return service != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                && service.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
     }
 
     /** The system power menu (Restart, and Power off where the firmware has it); the TV asks before it acts. */
