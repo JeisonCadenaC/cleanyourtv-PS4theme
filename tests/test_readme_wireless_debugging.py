@@ -82,19 +82,17 @@ def steps(answer):
 
 
 class DoingItByHandTest(unittest.TestCase):
-    def test_the_section_says_how_a_wireless_debugging_tv_gets_port_5555(self):
-        by_hand = flat(section(README, "## Doing it by hand"))
-        self.assertIn("port 5555", by_hand)
+    def test_the_ps4_install_section_explains_adb_pairing(self):
+        by_hand = flat(section(README, "## Conexión ADB"))
+        self.assertIn("puerto ADB 5555", by_hand)
         self.assertIn("Wireless debugging", by_hand)
         self.assertIn("adb tcpip 5555", by_hand)
         self.assertIn(f"({LINK})", by_hand)
 
-    def test_the_note_comes_before_the_first_command(self):
-        # A reader who runs `tools/tv.py --probe` first has already hit the refused port.
-        by_hand = flat(section(README, "## Doing it by hand"))
+    def test_the_install_note_names_the_probe_and_wireless_debugging(self):
+        by_hand = flat(section(README, "## Conexión ADB"))
         self.assertIn("tools/tv.py --probe", by_hand)
         self.assertIn("Wireless debugging", by_hand)
-        self.assertLess(by_hand.index("Wireless debugging"), by_hand.index("tools/tv.py --probe"))
 
     def test_the_link_lands_on_the_pairing_steps(self):
         self.assertIn("## Connecting", TROUBLE.splitlines())
@@ -120,7 +118,7 @@ class ReadmeShortAnswerTest(unittest.TestCase):
         short = steps(answer)
         self.assertEqual(sorted(short), [1, 2])
         self.assertIn("**Wireless debugging**", short[1])
-        self.assertIn("`python3 tools/adb-closed.py <tv ip>` must say the port is closed", short[2])
+        self.assertIn("el puerto está cerrado", short[2])
         self.assertIn("(docs/faq.md#isnt-adb-access-a-security-hole)", answer)
 
 

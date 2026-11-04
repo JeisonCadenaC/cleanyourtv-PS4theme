@@ -151,21 +151,17 @@ def claims(text):
 
 
 class ReadmeThemeCountTest(unittest.TestCase):
-    def test_the_count_names_every_theme(self):
-        row = themes_row(FRONT.read_text(encoding="utf-8"))
-        self.assertIsNotNone(row, "README.md has no `| **Themes** |` feature row any more")
-        claimed = count_in(row)
-        self.assertIsNotNone(claimed, f"the Themes row states no count: {row}")
-        shipped = theme_folders()
-        # Named in the failure so whoever added a theme knows which line to change.
-        self.assertEqual(
-            claimed, len(shipped),
-            f"the Themes row says {claimed} and themes/ holds {len(shipped)}: {', '.join(shipped)}")
+    def test_the_spanish_front_page_documents_the_ps4_theme_switch(self):
+        text = FRONT.read_text(encoding="utf-8")
+        self.assertIn("ps4_layout: true", text)
+        self.assertIn("docs/ps4-theme.md", text)
 
-    def test_every_front_page_names_the_same_themes(self):
+    def test_the_translated_upstream_pages_name_every_theme(self):
         shipped = theme_folders()
         stating = []
         for page in front_pages():
+            if page == FRONT:
+                continue
             for values, line in claims(page.read_text(encoding="utf-8")):
                 with self.subTest(page=page.name):
                     self.assertEqual(len(values), 1,
@@ -177,14 +173,11 @@ class ReadmeThemeCountTest(unittest.TestCase):
                         claimed, len(shipped),
                         f"{page.name} says {claimed} themes and themes/ holds {len(shipped)}: "
                         f"{', '.join(shipped)}")
-        # The walk above passes while finding nothing, which is how the German and Dutch rows went
-        # stale in the first place: these five pages state the count today, so one that stops
-        # saying it fails here rather than quietly leaving the check. README.uk.md joined them with
-        # the Ukrainian words above; before that it stated its count and this list still read three.
-        # README.tr.md states its count in digits, so it needs no words in the table.
+        # These inherited translations still describe the upstream theme collection. The Spanish
+        # fork README describes the PS4 layout instead and does not claim that those themes enable it.
         self.assertEqual(sorted(set(stating)),
-                         ["README.de.md", "README.md", "README.nl.md", "README.tr.md", "README.uk.md"],
-                         "the front pages that state the theme count are not the five that did: "
+                         ["README.de.md", "README.nl.md", "README.tr.md", "README.uk.md"],
+                         "the translated upstream pages that state the theme count changed: "
                          f"{sorted(set(stating))}")
 
 

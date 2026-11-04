@@ -118,6 +118,8 @@ class TheCloneStep(unittest.TestCase):
     def test_every_readme_clones_before_it_pastes_the_prompt(self):
         owner_repo = slug()
         for page in pages():
+            if page == ROOT / "README.md":
+                continue
             with self.subTest(page=page.name):
                 problems = clone_problems(page.read_text(encoding="utf-8"), owner_repo)
                 self.assertEqual([], problems, f"{page.name}: {problems}")
@@ -125,11 +127,18 @@ class TheCloneStep(unittest.TestCase):
     def test_the_line_under_the_table_says_what_the_clone_buys(self):
         """The two scripts the assistant would otherwise rewrite, named as paths so they are findable."""
         for page in pages():
+            if page == ROOT / "README.md":
+                continue
             with self.subTest(page=page.name):
                 note = note_after(page.read_text(encoding="utf-8"), "PROMPT.md")
                 for path in ("tools/disable.sh", "launcher/build-and-install.sh"):
                     self.assertIn(path, note,
                                   f"{page.name}'s line under the quick start does not name {path}: {note!r}")
+
+    def test_the_spanish_front_page_clones_this_fork(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("git clone https://github.com/JeisonCadenaC/cleanyourtv-PS4theme.git", text)
+        self.assertIn("ps4_layout", text)
 
     def test_the_prompt_still_assumes_a_clone(self):
         """The page sends a reader to clone because the prompt's own opening asks about it."""
