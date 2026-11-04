@@ -612,12 +612,23 @@ final class Ps4 {
             invalidate();
         }
 
+        /** Home's animation timer calls this each frame; true while the wave still has to move or settle. */
+        boolean frame() {
+            boolean busy = moving || Math.abs(amp) > 0.2f;
+            if (busy) invalidate();
+            else last = 0;
+            return busy;
+        }
+
         void setMoving(boolean on) {
             if (moving == on) return;
             moving = on;
             last = 0;
-            invalidate();
+            if (onChange != null) onChange.run();
         }
+
+        /** Told when the wave starts moving, so the timer can start. */
+        Runnable onChange;
 
         @Override
         protected void onDraw(Canvas c) {
@@ -639,8 +650,8 @@ final class Ps4 {
                 c.drawPath(path, played);
             }
             if (end + pad * 2 < getWidth() - pad) c.drawLine(end + pad * 2, mid, getWidth() - pad, mid, rest);
-            if (moving || Math.abs(amp) > 0.2f) postInvalidateDelayed(33);
-            else last = 0;
+            // Redraws come from the frame timer only: invalidating from here started a new chain on every outside
+            // redraw (the progress each second), and the chains added up to a redraw on every display frame.
         }
     }
 

@@ -281,19 +281,34 @@ final class Ps4Home {
                 && discs.get(focus).getVisibility() == View.VISIBLE) {
             want = discs.get(focus);
         }
-        if (want == spinning) return;
         spinning = want;
-        handler.removeCallbacks(spinTick);
-        if (spinning != null) handler.post(spinTick);
+        startTicking();
     }
 
     private View spinning;
-    private final Runnable spinTick = new Runnable() {
+    private boolean ticking;
+
+    private void startTicking() {
+        if (ticking) return;
+        ticking = true;
+        handler.post(animTick);
+    }
+
+    /**
+     * One timer for everything that moves on Home - the running app's disc and the player's wave - at 30 frames a
+     * second, so they redraw in the same frame instead of two timers out of step filling every display frame.
+     */
+    private final Runnable animTick = new Runnable() {
         @Override
         public void run() {
-            if (spinning == null) return;
-            spinning.setRotation((spinning.getRotation() + 360f * 33 / 1600) % 360f);
-            handler.postDelayed(this, 33);
+            boolean busy = false;
+            if (spinning != null && resumed) {
+                spinning.setRotation((spinning.getRotation() + 360f * 33 / 1600) % 360f);
+                busy = true;
+            }
+            if (mediaProgress != null && mediaProgress.frame()) busy = true;
+            if (busy) handler.postDelayed(this, 33);
+            else ticking = false;
         }
     };
 
@@ -478,6 +493,7 @@ final class Ps4Home {
 
         // The progress line: a travelling wave up to the position (Android 13's player), a flat track after it.
         mediaProgress = new Ps4.Wave(a, pl.primary, pl.track);
+        mediaProgress.onChange = this::startTicking;
         FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(px(MEDIA_TEXT_W), px(26));
         tp.leftMargin = px(196);
         tp.topMargin = px(148);
