@@ -100,6 +100,7 @@ printf "${C_CYAN} | |___| |  __/ (_| | | | |    | | (_) | |_| | |    | |   \\\\ 
 printf "${C_CYAN}  \\\\____|_|\\\\___|\\\\__,_|_| |_|    |_|\\\\___/ \\\\__,_|_|    |_|    \\\\_/   PS4${C_RESET}\n"
 echo
 echo '  Instalador del inicio estilo PS4 para Android TV y Google TV (Linux / macOS)'
+printf "  ${C_GRAY}Personalizado por JeisonCadenaC${C_RESET}\n"
 printf "  ${C_GRAY}Basado en CleanYourTV (Gathin y colaboradores), licencia MIT.${C_RESET}\n"
 echo
 printf "  ${C_YELLOW}Antes de seguir, en el TELEVISOR:${C_RESET}\n"

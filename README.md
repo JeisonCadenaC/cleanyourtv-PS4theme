@@ -152,6 +152,8 @@ en el launcher y su interfaz PS4.
 
 ## Instalación en un paso (recomendado para cualquier persona)
 
+Instalador personalizado por JeisonCadenaC.
+
 No necesitas saber programación ni usar la terminal. Un único script instala todo lo que falte en tu
 ordenador (Python, Java 17, el SDK de Android), encuentra el televisor, hace copia de seguridad, compila
 e instala el launcher y aplica tu tema, con preguntas en español en cada paso.

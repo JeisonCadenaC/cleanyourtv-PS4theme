@@ -102,6 +102,7 @@ Write-Host ' | |___| |  __/ (_| | | | |    | | (_) | |_| | |    | |   \ V /  ' -
 Write-Host '  \____|_|\___|\__,_|_| |_|    |_|\___/ \__,_|_|    |_|    \_/   PS4' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '  Instalador del inicio estilo PS4 para Android TV y Google TV' -ForegroundColor White
+Write-Host '  Personalizado por JeisonCadenaC' -ForegroundColor DarkGray
 Write-Host '  Basado en CleanYourTV (Gathin y colaboradores), licencia MIT.' -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  Antes de seguir, en el TELEVISOR:' -ForegroundColor Yellow

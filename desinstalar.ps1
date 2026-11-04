@@ -33,6 +33,7 @@ function Tv([string]$c) { (& $venvPy -I (Join-Path $Proyecto 'tools\tv.py') $c 2
 
 Write-Host ''
 Write-Host "  Deshaciendo la instalación PS4 en $TvIp" -ForegroundColor Cyan
+Write-Host '  Personalizado por JeisonCadenaC' -ForegroundColor DarkGray
 Write-Host '  Si el televisor pregunta "¿Permitir la depuración USB?", acepta.' -ForegroundColor Yellow
 & $venvPy -I (Join-Path $Proyecto 'tools\tv.py') --probe
 if ($LASTEXITCODE -ne 0) { Write-Host '  No hay conexión ADB: activa la depuración en el televisor y vuelve a intentarlo.' -ForegroundColor Red; exit 1 }

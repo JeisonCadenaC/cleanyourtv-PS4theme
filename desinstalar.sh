@@ -38,6 +38,7 @@ tv() { TV_HOST="$TV_IP" "$VENV_PY" -I "$PROYECTO/tools/tv.py" "$@" 2>&1; }
 
 echo
 echo "  Deshaciendo la instalacion PS4 en $TV_IP"
+echo '  Personalizado por JeisonCadenaC'
 echo '  Si el televisor pregunta "¿Permitir la depuracion USB?", acepta.'
 TV_HOST="$TV_IP" "$VENV_PY" -I "$PROYECTO/tools/tv.py" --probe || { echo '  No hay conexion ADB: activa la depuracion en el televisor y vuelve a intentarlo.' >&2; exit 1; }
 

@@ -1,5 +1,7 @@
 # Tutorial completo: transforma tu Android TV con el inicio estilo PS4
 
+Instalador personalizado por JeisonCadenaC.
+
 Esta guía está escrita para cualquier persona, **sin necesidad de experiencia previa con programación,
 ADB o Android**. Sigue los pasos en orden; cada uno dice exactamente qué vas a ver en pantalla y qué
 hacer. Si te atascas en cualquier punto, ve directamente a [Solución de problemas](#solución-de-problemas).
