@@ -69,7 +69,7 @@ aplicaciones y conservan sus marcas.
       <p align="center"><strong>Notificaciones</strong></p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/ps4-theme/screenshots/screen-protector-propia.png" alt="Protector de pantalla del launcher Android TV" width="100%">
+      <img src="docs/ps4-theme/screenshots/screen-protector.png" alt="Protector de pantalla del launcher Android TV" width="100%">
       <p align="center"><strong>Protector de pantalla</strong></p>
     </td>
   </tr>
