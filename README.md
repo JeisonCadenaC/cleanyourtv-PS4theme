@@ -47,10 +47,10 @@ en una consola ni modifica, instala o emula juegos.
 
 ## Capturas
 
-Estas imágenes se tomaron de la aplicación ejecutándose en un Android TV mediante ADB y se editaron antes de
-publicarlas. Se sustituyeron el fondo y los datos personales, de red, reproducción y notificaciones por
-contenido de ejemplo. No son capturas de referencia de Sony ni se incluyen fondos o imágenes de PS4.
-Los iconos de aplicaciones visibles pertenecen a las aplicaciones instaladas y conservan sus marcas.
+Las capturas muestran el launcher en ejecución en Android TV. Antes de publicar imágenes, asegúrate de que
+no revelen datos personales, redes Wi-Fi o notificaciones privadas, y de que los fondos y recursos visuales
+sean propios o tengan licencia para redistribuirse. Los iconos de aplicaciones visibles pertenecen a esas
+aplicaciones y conservan sus marcas.
 
 <table>
   <tr>
@@ -65,15 +65,19 @@ Los iconos de aplicaciones visibles pertenecen a las aplicaciones instaladas y c
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/ps4-theme/screenshots/notifications.png" alt="Pantalla de notificaciones con contenido genérico y datos personales sustituidos" width="100%">
+      <img src="docs/ps4-theme/screenshots/notifications.png" alt="Pantalla de notificaciones del launcher" width="100%">
       <p align="center"><strong>Notificaciones</strong></p>
     </td>
-    <td width="50%" valign="middle">
-      <p><strong>La pantalla de inicio</strong> está al comienzo de esta página. La tarjeta inferior es el
-      reproductor multimedia de Android; solo aparece si el sistema expone una sesión multimedia activa.</p>
+    <td width="50%" valign="top">
+      <img src="docs/ps4-theme/screenshots/screen-protector-propia.png" alt="Protector de pantalla del launcher Android TV" width="100%">
+      <p align="center"><strong>Protector de pantalla</strong></p>
     </td>
   </tr>
 </table>
+
+La pantalla de inicio está al comienzo de esta página. La tarjeta inferior es el reproductor multimedia de
+Android; solo aparece si el sistema expone una sesión multimedia activa. Cambia `screen-protector-propia.png`
+por una captura que tengas derecho a publicar.
 
 ## Funciones
 
