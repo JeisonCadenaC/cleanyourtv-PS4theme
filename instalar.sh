@@ -333,22 +333,37 @@ $PROBE"
   HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
   if [[ "$HOME_AHORA" != *com.gathin.tvhome* ]]; then
     aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvio a '$HOME_AHORA')."
-    # Placas TCL (TclAppBoot): el gestor de arranque del fabricante exige un permiso propio para dejar
-    # correr una app al arrancar; sin el, cada reinicio devuelve el inicio a su launcher de fabrica pase lo
-    # que pase con "set-home-activity". docs/devices/tcl-tc8000-ay30a2.md documenta el mismo sintoma y este
-    # arreglo (concederlo y volver a intentar), asi que se prueba solo antes de rendirse.
-    if [[ "$(printf '%s' "$MARCA" | tr '[:upper:]' '[:lower:]')" == *tcl* ]]; then
-      echo '  Esto es un comportamiento conocido en algunas placas TCL: su gestor de arranque propio exige'
-      echo '  un permiso especial para dejar correr una app nueva al arrancar. Probando a concederlo y'
-      echo '  reintentando...'
+    # Placas TCL (TclAppBoot): su gestor de arranque exige un permiso propio para dejar correr una app al
+    # arrancar y, incluso con el, puede reafirmar su propio launcher como inicio en cada arranque antes de
+    # que Android termine de iniciar (docs/devices/tcl-tc8000-ay30a2.md, #1116). Conceder el permiso y pedir
+    # Home en caliente no basta ahi: hace falta stock_home_redirect (para que el ayudante de botones detecte
+    # ese regreso en el siguiente arranque y abra este launcher de vuelta) y reiniciar de nuevo para
+    # comprobarlo de verdad, no solo en caliente. Se intenta solo en placas TCL.
+    STOCK_PKG="${HOME_AHORA%%/*}"
+    if [[ "$(printf '%s' "$MARCA" | tr '[:upper:]' '[:lower:]')" == *tcl* ]] && [ -n "$STOCK_PKG" ]; then
+      echo "  Esto es un comportamiento conocido en algunas placas TCL: su propio gestor de arranque reclama"
+      echo "  el inicio ('$STOCK_PKG') en cada reinicio. Ajustando el arranque de esta placa y reiniciando"
+      echo '  otra vez para comprobarlo...'
       tv 'cmd appops set com.gathin.tvhome AUTO_START allow' >/dev/null
       tv 'cmd appops set com.gathin.tvhome APP_AUTO_START allow' >/dev/null
       tv 'cmd appops set com.gathin.tvhome APP_ASSOC_START allow' >/dev/null
       tv 'appops write-settings' >/dev/null
-      tv 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity' >/dev/null
-      tv 'am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity' >/dev/null
-      sleep 3
-      HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
+      # Guardado para que el tema real del paso 9/10 (que aun no se ha aplicado) tambien lo incluya; sin
+      # esto, enviar ese tema borraria este ajuste y el problema volveria al reiniciar para cerrar ADB.
+      TCL_STOCK_HOME_REDIRECT="$STOCK_PKG"
+      DIR_REDIR="$BASE/cyt-tcl-redirect"
+      mkdir -p "$DIR_REDIR"
+      "$PYTHON" -I -c "import json,sys; json.dump({'stock_home_redirect': sys.argv[1], 'ps4_layout': True}, open(sys.argv[2],'w'))" \
+        "$STOCK_PKG" "$DIR_REDIR/config.json"
+      TV_HOST="$TV_IP" "$PROYECTO/tools/theme.sh" "$DIR_REDIR" >/dev/null
+      (cd "$PROYECTO/launcher" && TV_HOST="$TV_IP" STOCK_LAUNCHER=none HOME_KEY_SERVICE=1 ./build-and-install.sh >/dev/null) \
+        || aviso "No se pudo activar el ayudante de botones para la recuperacion TCL."
+      tv 'reboot' >/dev/null
+      sleep 10
+      if esperar_televisor 3 "puerto_abierto \"\$TV_IP\" 5555 1"; then
+        probar_adb >/dev/null
+        [ "$TV_OK" -eq 0 ] && HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
+      fi
     fi
     if [[ "$HOME_AHORA" != *com.gathin.tvhome* ]]; then
       echo '  En Google TV esto suele significar que la pantalla de configuracion (setupwraith) tambien reclama'
@@ -583,7 +598,13 @@ titulo '9/10  Tu tema PS4'
 TEMA="$HOME/Tema-PS4"
 mkdir -p "$TEMA"
 CFG_FILE="$TEMA/config.json"
-[ -f "$CFG_FILE" ] || cp "$PROYECTO/docs/ps4-theme/tema-ejemplo/config.json" "$CFG_FILE"
+PLANTILLA_FONDO="$PROYECTO/docs/ps4-theme/tema-ejemplo/wallpaper.jpg"
+if [ ! -f "$CFG_FILE" ]; then
+  cp "$PROYECTO/docs/ps4-theme/tema-ejemplo/config.json" "$CFG_FILE"
+  # El fondo de Spider-Man que trae este instalador por defecto: solo la primera vez que se crea la
+  # carpeta de tema, para no pisar un fondo que ya hayas puesto tu en una instalacion anterior.
+  [ -f "$PLANTILLA_FONDO" ] && cp "$PLANTILLA_FONDO" "$TEMA/wallpaper.jpg"
+fi
 
 NOMBRE_ACTUAL=$("$PYTHON" -I -c "import json,sys; print(json.load(open(sys.argv[1])).get('ps4_user_name','') or '')" "$CFG_FILE")
 NOMBRE=$(pregunta '¿Que nombre muestro en tu perfil y en el saludo?' "${NOMBRE_ACTUAL:-$USER}")
@@ -613,15 +634,15 @@ redimensionar() {
 }
 
 echo
-echo '  Fondo de pantalla: arrastra aqui una imagen (JPG o PNG, mejor 1920x1080) o deja vacio para el'
-echo '  fondo azul PS4. El color del tema se toma solo de tu fondo.'
+echo '  Fondo de pantalla: arrastra aqui una imagen (JPG o PNG, mejor 1920x1080) o deja vacio para dejar'
+echo '  el fondo que trae por defecto este instalador. El color del tema se toma solo de tu fondo.'
 FONDO=$(pregunta 'Imagen de fondo' '')
 FONDO="${FONDO%\"}"; FONDO="${FONDO#\"}"
 if [ -n "$FONDO" ] && [ -f "$FONDO" ]; then
   redimensionar "$FONDO" "$TEMA/wallpaper.jpg"
   ok 'Fondo preparado'
 elif [ -n "$FONDO" ]; then
-  aviso "No encontre '$FONDO'; se usara el fondo actual o el azul PS4."
+  aviso "No encontre '$FONDO'; se usara el fondo que ya habia en la carpeta de tema."
 fi
 
 AVATAR=$(pregunta 'Foto de perfil (opcional; arrastra una imagen o deja vacio)' '')
@@ -629,6 +650,19 @@ AVATAR="${AVATAR%\"}"; AVATAR="${AVATAR#\"}"
 if [ -n "$AVATAR" ] && [ -f "$AVATAR" ]; then
   redimensionar "$AVATAR" "$TEMA/avatar.jpg"
   ok 'Foto de perfil preparada'
+fi
+
+# Si el reinicio de comprobacion del launcher tuvo que corregir el arranque de una placa TCL (mas arriba),
+# este tema real tiene que llevar el mismo stock_home_redirect: al enviarse reemplaza por completo el tema
+# provisional que se mando entonces, y sin esto el problema volveria a aparecer en el ultimo reinicio.
+if [ -n "${TCL_STOCK_HOME_REDIRECT:-}" ]; then
+  "$PYTHON" -I -c "
+import json, sys
+f = sys.argv[1]
+d = json.load(open(f))
+d['stock_home_redirect'] = sys.argv[2]
+json.dump(d, open(f, 'w'), indent=2, ensure_ascii=False)
+" "$CFG_FILE" "$TCL_STOCK_HOME_REDIRECT"
 fi
 
 paso 'Enviando el tema al televisor ...'

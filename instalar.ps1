@@ -434,29 +434,47 @@ function Reinicio-DeVerificacion([string]$titulo, [string]$motivo) {
     $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
     if ($homeAhora -notmatch 'com\.gathin\.tvhome') {
         Aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvió a '$homeAhora')."
-        # Placas TCL (TclAppBoot): el gestor de arranque del fabricante exige un permiso propio para dejar
-        # correr una app al arrancar; sin él, cada reinicio devuelve el inicio a su launcher de fábrica pase
-        # lo que pase con "set-home-activity". docs/devices/tcl-tc8000-ay30a2.md documenta el mismo síntoma
-        # y este arreglo (concederlo y volver a intentar), así que se prueba solo antes de rendirse.
-        if ($marca -match 'tcl') {
-            Write-Host '  Esto es un comportamiento conocido en algunas placas TCL: su gestor de arranque propio' -ForegroundColor Yellow
-            Write-Host '  exige un permiso especial para dejar correr una app nueva al arrancar. Probando a' -ForegroundColor Yellow
-            Write-Host '  concederlo y reintentando...' -ForegroundColor Yellow
+        # Placas TCL (TclAppBoot): su gestor de arranque exige un permiso propio para dejar correr una app
+        # al arrancar y, incluso con él, puede reafirmar su propio launcher como inicio en cada arranque
+        # antes de que Android termine de iniciar (docs/devices/tcl-tc8000-ay30a2.md, #1116). Conceder el
+        # permiso y pedir Home en caliente no basta ahí: hace falta stock_home_redirect (para que el
+        # ayudante de botones detecte ese regreso en el siguiente arranque y abra este launcher de vuelta) y
+        # reiniciar de nuevo para comprobarlo de verdad, no solo en caliente. Se intenta solo en placas TCL.
+        $stockPkg = ($homeAhora -split '/')[0]
+        if ($marca -match 'tcl' -and $stockPkg) {
+            Write-Host "  Esto es un comportamiento conocido en algunas placas TCL: su propio gestor de arranque" -ForegroundColor Yellow
+            Write-Host "  reclama el inicio ('$stockPkg') en cada reinicio. Ajustando el arranque de esta placa y" -ForegroundColor Yellow
+            Write-Host '  reiniciando otra vez para comprobarlo...' -ForegroundColor Yellow
             Tv 'cmd appops set com.gathin.tvhome AUTO_START allow' | Out-Null
             Tv 'cmd appops set com.gathin.tvhome APP_AUTO_START allow' | Out-Null
             Tv 'cmd appops set com.gathin.tvhome APP_ASSOC_START allow' | Out-Null
             Tv 'appops write-settings' | Out-Null
-            Tv 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity' | Out-Null
-            Tv 'am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity' | Out-Null
-            Start-Sleep -Seconds 3
-            $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+            # Guardado para que el tema real del paso 9/10 (que aún no se ha aplicado) también lo incluya;
+            # sin esto, enviar ese tema borraría este ajuste y el problema volvería al reiniciar para cerrar ADB.
+            $script:tclStockHomeRedirect = $stockPkg
+            $dirRedir = Join-Path $env:TEMP 'cyt-tcl-redirect'
+            New-Item -ItemType Directory -Force -Path $dirRedir | Out-Null
+            @{ stock_home_redirect = $stockPkg; ps4_layout = $true } | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $dirRedir 'config.json')
+            & (Join-Path $Proyecto 'tools\theme.ps1') -TvHost $TvIp $dirRedir | Out-Null
+            Push-Location (Join-Path $Proyecto 'launcher')
+            try { & (Join-Path $Proyecto 'launcher\build-and-install.ps1') -TvHost $TvIp -StockLauncher none -HomeKeyService | Out-Null }
+            catch { Aviso "No se pudo activar el ayudante de botones para la recuperación TCL: $($_.Exception.Message)" }
+            Pop-Location
+            Tv 'reboot' | Out-Null
+            Start-Sleep -Seconds 10
+            if (Esperar-Televisor 3 $puertoListo) {
+                $null = Probar-Adb
+                if ($tvCodigo -eq 0) {
+                    $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+                }
+            }
         }
         if ($homeAhora -notmatch 'com\.gathin\.tvhome') {
             Write-Host '  En Google TV esto suele significar que la pantalla de configuración (setupwraith) también reclama' -ForegroundColor Yellow
             Write-Host '  el inicio: añádela a tu lista de limpieza (ver README, Solución de problemas) y repite el instalador.' -ForegroundColor Yellow
             Falla "Se detiene aquí para no cerrar ADB con un inicio que no es el correcto (sigue resolviendo a '$homeAhora'). Repite el instalador o usa desinstalar.ps1."
         }
-        Ok 'Recuperado: con los permisos de arranque concedidos, el inicio volvió a ser el nuevo launcher.'
+        Ok 'Recuperado: el inicio volvió a ser el nuevo launcher tras ajustar el arranque de esta placa.'
         return
     }
     Ok 'El televisor arrancó bien tras reiniciar: el inicio sigue siendo el nuevo launcher.'
@@ -694,25 +712,38 @@ function Guardar-Jpg([string]$origen, [string]$destino, [int]$ancho, [int]$alto)
 $tema = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Tema-PS4'
 New-Item -ItemType Directory -Force -Path $tema | Out-Null
 $cfgFile = Join-Path $tema 'config.json'
-if (-not (Test-Path $cfgFile)) { Copy-Item (Join-Path $Proyecto 'docs\ps4-theme\tema-ejemplo\config.json') $cfgFile }
+$plantillaFondo = Join-Path $Proyecto 'docs\ps4-theme\tema-ejemplo\wallpaper.jpg'
+if (-not (Test-Path $cfgFile)) {
+    Copy-Item (Join-Path $Proyecto 'docs\ps4-theme\tema-ejemplo\config.json') $cfgFile
+    # El fondo de Spider-Man que trae este instalador por defecto: solo la primera vez que se crea la
+    # carpeta de tema, para no pisar un fondo que ya hayas puesto tú en una instalación anterior.
+    if (Test-Path $plantillaFondo) { Copy-Item $plantillaFondo (Join-Path $tema 'wallpaper.jpg') }
+}
 $cfg = Get-Content $cfgFile -Raw -Encoding UTF8 | ConvertFrom-Json
 
 $nombre = Pregunta '¿Qué nombre muestro en tu perfil y en el saludo?' ($(if ($cfg.ps4_user_name) { $cfg.ps4_user_name } else { $env:USERNAME }))
 $cfg | Add-Member -NotePropertyName ps4_user_name -NotePropertyValue $nombre -Force
 
 Write-Host ''
-Write-Host '  Fondo de pantalla: arrastra aquí una imagen (JPG o PNG, mejor 1920x1080) o deja vacío para el'
-Write-Host '  fondo azul PS4. El color del tema se toma solo de tu fondo.'
+Write-Host '  Fondo de pantalla: arrastra aquí una imagen (JPG o PNG, mejor 1920x1080) o deja vacío para dejar' -ForegroundColor White
+Write-Host '  el fondo que trae por defecto este instalador. El color del tema se toma solo de tu fondo.' -ForegroundColor White
 $fondo = (Pregunta 'Imagen de fondo' '').Trim('"')
 if ($fondo -and (Test-Path $fondo)) {
     Guardar-Jpg $fondo (Join-Path $tema 'wallpaper.jpg') 1920 1080
     Ok 'Fondo preparado (1920x1080)'
-} elseif ($fondo) { Aviso "No encontré '$fondo'; se usará el fondo actual o el azul PS4." }
+} elseif ($fondo) { Aviso "No encontré '$fondo'; se usará el fondo que ya había en la carpeta de tema." }
 
 $avatar = (Pregunta 'Foto de perfil (opcional; arrastra una imagen o deja vacío)' '').Trim('"')
 if ($avatar -and (Test-Path $avatar)) {
     Guardar-Jpg $avatar (Join-Path $tema 'avatar.jpg') 256 256
     Ok 'Foto de perfil preparada'
+}
+
+# Si el reinicio de comprobación del launcher tuvo que corregir el arranque de una placa TCL (más arriba),
+# este tema real tiene que llevar el mismo stock_home_redirect: al enviarse reemplaza por completo el tema
+# provisional que se mandó entonces, y sin esto el problema volvería a aparecer en el último reinicio.
+if ($script:tclStockHomeRedirect) {
+    $cfg | Add-Member -NotePropertyName stock_home_redirect -NotePropertyValue $script:tclStockHomeRedirect -Force
 }
 
 $cfg | ConvertTo-Json -Depth 5 | ForEach-Object { [IO.File]::WriteAllText($cfgFile, $_, (New-Object Text.UTF8Encoding $false)) }
