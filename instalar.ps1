@@ -84,10 +84,26 @@ function SiNo([string]$t, [bool]$porDefecto = $true) {
 function Descargar([string]$url, [string]$destino) {
     Paso "Descargando $(Split-Path $url -Leaf) ..."
     for ($i = 1; $i -le 3; $i++) {
+        # La descarga corre en un job aparte para poder mostrar cuánto lleva cada pocos segundos: con
+        # $ProgressPreference = 'SilentlyContinue' (más arriba, para no ir 10 veces más lenta) Invoke-WebRequest
+        # no imprime nada hasta que termina, y una descarga grande en una red lenta se ve igual que el script
+        # congelado aunque esté avanzando bien.
+        $job = Start-Job -ScriptBlock {
+            param($u, $d)
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $u -OutFile $d -UseBasicParsing
+        } -ArgumentList $url, $destino
+        while ($job.State -eq 'Running') {
+            Start-Sleep -Seconds 3
+            $tam = if (Test-Path $destino) { (Get-Item $destino).Length } else { 0 }
+            Write-Host ("    ({0:N1} MB descargados) ..." -f ($tam / 1MB)) -ForegroundColor DarkGray
+        }
         try {
-            Invoke-WebRequest -Uri $url -OutFile $destino -UseBasicParsing
+            Receive-Job $job -ErrorAction Stop | Out-Null
+            Remove-Job $job -ErrorAction SilentlyContinue
             return
         } catch {
+            Remove-Job $job -ErrorAction SilentlyContinue
             if ($i -eq 3) { Falla "No se pudo descargar $url. ¿Hay conexión a Internet? ($($_.Exception.Message))" }
             Start-Sleep -Seconds 3
         }
@@ -97,6 +113,60 @@ function Descomprimir([string]$zip, [string]$destino) {
     if (Test-Path $destino) { Remove-Item -Recurse -Force $destino }
     Expand-Archive -Path $zip -DestinationPath $destino -Force
     Remove-Item -Force $zip
+}
+# Pone cada argumento entre comillas dobles: Start-Process, a diferencia de PowerShell con "&", no las
+# añade él solo, así que sin esto un argumento con espacios (una ruta bajo un usuario con espacio en el
+# nombre) se partiría en dos. Las comillas las quita el propio analizador de argumentos de Windows al
+# repartirlos, igual que al escribir  java -jar "C:\Program Files\algo.jar"  en una terminal.
+function Args-Cmd([string[]]$items) {
+    return ($items | ForEach-Object { '"' + $_ + '"' })
+}
+# Ejecuta sdkmanager.bat (vía Start-Process, no con "&": así nunca pasa por el escalado a error fatal de
+# PowerShell que corrige el comentario de más abajo) y muestra cada pocos segundos la última línea nueva
+# que haya escrito, o un aviso de "sigue trabajando" si no ha escrito nada: sdkmanager puede quedarse
+# varios segundos resolviendo licencias o metadatos en silencio, y eso antes se veía igual que un script
+# congelado. Devuelve el código de salida y todo lo que imprimió (normal y error), para poder explicar
+# un fallo real en vez de solo "revisa el registro".
+# El parámetro de argumentos NO se llama $Args: esa es la variable automática de PowerShell, y
+# reutilizar su nombre aquí rompía en silencio el paso de argumentos a Start-Process.
+function Ejecutar-ConBarra([string]$Exe, [string[]]$Argumentos, [string]$Etiqueta, [string]$EntradaTexto = $null) {
+    $outFile = [IO.Path]::GetTempFileName()
+    $errFile = [IO.Path]::GetTempFileName()
+    $inFile = $null
+    $parametros = @{
+        FilePath               = $Exe
+        ArgumentList           = (Args-Cmd $Argumentos)
+        RedirectStandardOutput = $outFile
+        RedirectStandardError  = $errFile
+        NoNewWindow            = $true
+        PassThru               = $true
+    }
+    if ($null -ne $EntradaTexto) {
+        $inFile = [IO.Path]::GetTempFileName()
+        [IO.File]::WriteAllText($inFile, $EntradaTexto)
+        $parametros.RedirectStandardInput = $inFile
+    }
+    $p = Start-Process @parametros
+    $inicio = Get-Date
+    $vistas = 0
+    while (-not $p.HasExited) {
+        Start-Sleep -Seconds 3
+        $seg = [int]((Get-Date) - $inicio).TotalSeconds
+        $lineas = @(Get-Content $outFile -ErrorAction SilentlyContinue)
+        if ($lineas.Count -gt $vistas) {
+            ($lineas | Select-Object -Skip $vistas) | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            $vistas = $lineas.Count
+        } else {
+            Write-Host "    ($Etiqueta; ${seg}s transcurridos, sigue trabajando) ..." -ForegroundColor DarkGray
+        }
+    }
+    $p.WaitForExit()
+    $codigo = $p.ExitCode
+    $salida = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue)
+    $errsal = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+    Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue
+    if ($inFile) { Remove-Item $inFile -ErrorAction SilentlyContinue }
+    return [pscustomobject]@{ Codigo = $codigo; Salida = "$salida$errsal" }
 }
 
 Clear-Host
@@ -197,15 +267,16 @@ $env:ANDROID_SDK_ROOT = $sdk
 if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0')) -or -not (Test-Path (Join-Path $sdk 'platforms\android-34')) -or
     -not (Test-Path (Join-Path $sdk 'platform-tools\adb.exe'))) {
     Paso 'Aceptando licencias y descargando Android 14 (SDK 34), build-tools y ADB (~350 MB) ...'
-    # 2>&1 (no *> $null ni 2>$null): sdkmanager escribe avisos de red normales en su salida de error, y con
-    # $ErrorActionPreference = 'Stop' eso detiene todo el script con un "NativeCommandError" aunque sdkmanager
-    # siga funcionando bien; fundir la salida de error con la normal evita que PowerShell la trate como un
-    # error que para el script. El resultado solo se comprueba después, con Test-Path.
+    # Ejecutar-ConBarra corre sdkmanager aparte y va mostrando cada pocos segundos lo último que escribió,
+    # o un aviso de que sigue trabajando si no escribe nada: sdkmanager puede quedarse resolviendo
+    # licencias o metadatos varios segundos en silencio, y eso se veía igual que el script congelado
+    # aunque siguiera avanzando bien.
     $si = ('y' + [Environment]::NewLine) * 30
-    $si | & $sdkmanager --sdk_root="$sdk" --licenses 2>&1 | Out-Null
-    & $sdkmanager --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools' 2>&1 | Out-Null
+    Ejecutar-ConBarra $sdkmanager @("--sdk_root=$sdk", '--licenses') 'Aceptando licencias' $si | Out-Null
+    $resultado = Ejecutar-ConBarra $sdkmanager @("--sdk_root=$sdk", 'platforms;android-34', 'build-tools;34.0.0', 'platform-tools') 'Descargando el SDK'
     if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0'))) {
-        Falla 'sdkmanager no instaló build-tools 34.0.0 (revisa el registro: puede ser un corte de red al descargar).'
+        $ultimas = (($resultado.Salida -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 8) -join "`n")
+        Falla "sdkmanager no instaló build-tools 34.0.0. Esto suele ser un corte de red al descargar; las últimas líneas que escribió fueron:`n$ultimas"
     }
 }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
