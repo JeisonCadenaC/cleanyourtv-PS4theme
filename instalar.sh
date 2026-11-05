@@ -7,6 +7,12 @@
 # (opcionalmente) limpia el software de fabrica, compila e instala el launcher desde el codigo fuente,
 # aplica tu tema y, al final, cierra el acceso ADB.
 #
+# El televisor se reinicia 2 o 3 veces durante el proceso (no solo al final): cada reinicio intermedio
+# comprueba, con ADB todavia activo, que el televisor arranca bien antes de aplicar el siguiente cambio.
+# Esto evita quedarse con un televisor (o un script) que parece congelado sin ADB para recuperarlo, que
+# es justo lo que puede pasar si el "ayudante de botones" se activa en el mismo paso que el cambio de
+# inicio (ver docs/TROUBLESHOOTING.md).
+#
 # Uso:
 #   ./instalar.sh
 #   ./instalar.sh --tv 192.168.1.50            # sin buscar el televisor
@@ -131,7 +137,7 @@ esac
 # 1. Herramientas del ordenador (sin sudo para Java ni el SDK de Android)
 # ------------------------------------------------------------------------------------------------
 
-titulo '1/9  Preparando las herramientas de este ordenador'
+titulo '1/10  Preparando las herramientas de este ordenador'
 
 PYTHON=''
 for c in python3 python; do
@@ -211,7 +217,7 @@ ok "Android SDK y ADB: $SDK_DIR"
 # 2. El proyecto
 # ------------------------------------------------------------------------------------------------
 
-titulo '2/9  Descargando el proyecto'
+titulo '2/10  Descargando el proyecto'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/launcher/build-and-install.sh" ]; then
@@ -247,13 +253,97 @@ fi
 "$VENV_PY" -m pip install --quiet --disable-pip-version-check -r "$PROYECTO/tools/requirements.txt" || falla 'pip no pudo instalar tools/requirements.txt.'
 ok 'Herramientas de Python listas'
 
-tv() { TV_HOST="$TV_IP" "$VENV_PY" -I "$PROYECTO/tools/tv.py" "$@" 2>&1; }
+tv() { TV_HOST="$TV_IP" TV_CONNECT_TIMEOUT_S="${TV_CONNECT_TIMEOUT_S:-120}" "$VENV_PY" -I "$PROYECTO/tools/tv.py" "$@" 2>&1; }
+
+probar_adb() {
+  local intentos="${1:-6}" espera="${2:-5}" i probe=''
+  for ((i = 1; i <= intentos; i++)); do
+    # TV_CONNECT_TIMEOUT_S (fijado mas abajo) acota cada intento a unos segundos: sin esto, un intento
+    # podia quedarse hasta 120s sin imprimir nada, y eso se ve igual que un script congelado aunque el
+    # televisor estuviera bien.
+    printf "    (intento %s de %s; cada uno tarda hasta %ss) ...\n" "$i" "$intentos" "${TV_CONNECT_TIMEOUT_S:-120}"
+    probe=$(tv --probe); TV_OK=$?
+    [ "$TV_OK" -eq 0 ] && break
+    sleep "$espera"
+  done
+  printf '%s' "$probe"
+}
+
+ping_responde() {
+  if command -v ping >/dev/null 2>&1; then
+    if [ "$PLATAFORMA" = mac ]; then ping -c 1 -t 1 "$1" >/dev/null 2>&1
+    else ping -c 1 -W 1 "$1" >/dev/null 2>&1; fi
+  else
+    return 1
+  fi
+}
+
+VISTO_EN_RED=0
+# Espera hasta $1 minutos a que el comando $2 (evaluado con eval) salga con 0, comprobando cada 5s.
+# Mientras espera, recuerda si el televisor llego a responder en la red (aunque $2 no se cumpliera):
+# VISTO_EN_RED distingue "sigue arrancando, solo tarda" de "no reacciona nada" si se agota el tiempo.
+esperar_televisor() {
+  local minutos="$1" condicion="$2" fin
+  VISTO_EN_RED=0
+  fin=$(($(date +%s) + minutos * 60))
+  while [ "$(date +%s)" -lt "$fin" ]; do
+    sleep 5
+    if [ "$VISTO_EN_RED" -eq 0 ] && ping_responde "$TV_IP"; then
+      VISTO_EN_RED=1
+      echo '    (el televisor ya responde en la red; esperando a que termine de arrancar)'
+    fi
+    eval "$condicion" && return 0
+  done
+  return 1
+}
+
+# Reinicia el televisor con ADB todavia activo y comprueba que vuelve a arrancar con el nuevo launcher
+# como inicio, antes de aplicar el siguiente cambio. Si el televisor no responde, nunca cierra ADB por
+# su cuenta: este ordenador sigue teniendo acceso para diagnosticar o deshacer el paso.
+reinicio_de_verificacion() {
+  local titulo_paso="$1" motivo="$2"
+  titulo "$titulo_paso"
+  echo "  $motivo"
+  echo '  La depuracion ADB sigue activa durante este reinicio: si algo va mal, este ordenador podra'
+  echo '  reconectarse y deshacer el cambio. ADB no se cierra hasta el ultimo paso del instalador.'
+  tv reboot >/dev/null
+  sleep 10
+  if ! esperar_televisor 3 "puerto_abierto \"\$TV_IP\" 5555 1"; then
+    echo
+    echo '  [!] El televisor no respondio por ADB en 3 minutos tras reiniciar.'
+    if [ "$VISTO_EN_RED" -eq 1 ]; then
+      echo '      Sigue respondiendo en la red (no esta totalmente congelado), pero ADB no vuelve.'
+    else
+      echo '      No responde ni siquiera en la red: puede estar congelado en la animacion de arranque.'
+    fi
+    echo '      - Si el televisor suele tardar en arrancar, dale un poco mas de tiempo.'
+    echo '      - Si no reacciona, desenchufalo 30 segundos y enchufalo de nuevo: ADB seguia activo y'
+    echo '        nada se ha desinstalado, asi que un corte de corriente no pierde ningun cambio.'
+    if ! sino '  ¿Sigo esperando 3 minutos mas?' s; then
+      falla 'Instalacion detenida: el televisor no respondio tras el reinicio de comprobacion.'
+    fi
+    esperar_televisor 3 "puerto_abierto \"\$TV_IP\" 5555 1" || \
+      falla "El televisor sigue sin responder por ADB tras reiniciar; no se continua para no arriesgar mas cambios encima.
+      Cuando vuelva a responder, revisa con:  TV_HOST=$TV_IP tools/venv/bin/python tools/tv.py --probe"
+  fi
+  PROBE=$(probar_adb)
+  [ "$TV_OK" -eq 0 ] || falla "El televisor respondio en la red pero no por ADB tras reiniciar (puede que haya que aceptar otra vez la depuracion en pantalla):
+$PROBE"
+  HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
+  if [[ "$HOME_AHORA" != *com.gathin.tvhome* ]]; then
+    aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvio a '$HOME_AHORA')."
+    echo '  En Google TV esto suele significar que la pantalla de configuracion (setupwraith) tambien reclama'
+    echo '  el inicio: anadela a tu lista de limpieza (ver README, Solucion de problemas) y repite el instalador.'
+    falla 'Se detiene aqui para no cerrar ADB con un inicio que no es el correcto. Repite el instalador o usa desinstalar.sh.'
+  fi
+  ok 'El televisor arranco bien tras reiniciar: el inicio sigue siendo el nuevo launcher.'
+}
 
 # ------------------------------------------------------------------------------------------------
 # 3. Encontrar y conectar el televisor
 # ------------------------------------------------------------------------------------------------
 
-titulo '3/9  Conectando con el televisor'
+titulo '3/10  Conectando con el televisor'
 
 puerto_abierto() {
   local ip="$1" puerto="${2:-5555}" espera="${3:-0.4}"
@@ -338,7 +428,7 @@ ok "Conectado: $MARCA $MODELO (Android $VERSION, SDK $SDK_TV)"
 SEGURO=$(printf '%s' "$MODELO" | tr -c 'A-Za-z0-9_-' '_')
 BACKUP="$PROYECTO/backup/${SEGURO}-$(date +%Y%m%d-%H%M%S)"
 if [ "$SOLO_TEMA" -ne 1 ]; then
-  titulo '4/9  Copia de seguridad del televisor'
+  titulo '4/10  Copia de seguridad del televisor'
   mkdir -p "$BACKUP"
   tv 'pm list packages -f' > "$BACKUP/paquetes.txt"
   tv 'pm list packages -d' > "$BACKUP/desactivados.txt"
@@ -354,7 +444,7 @@ fi
 
 LISTA_USADA=''
 if [ "$SOLO_TEMA" -ne 1 ] && [ "$SIN_LIMPIEZA" -ne 1 ]; then
-  titulo '5/9  Limpieza de apps de fabrica (opcional)'
+  titulo '5/10  Limpieza de apps de fabrica (opcional)'
   echo '  El proyecto trae listas probadas por modelo. Solo DESACTIVAN apps de rastreo y publicidad;'
   echo '  no borran nada y desinstalar.sh lo deshace. Nunca tocan HDMI, el control, el teclado ni Play Store.'
   CANDIDATOS_FILE="$BASE/candidatos.tsv"
@@ -419,20 +509,38 @@ fi
 # ------------------------------------------------------------------------------------------------
 
 if [ "$SOLO_TEMA" -ne 1 ]; then
-  titulo '6/9  Compilando e instalando el launcher (5-10 minutos la primera vez)'
+  titulo '6/10  Compilando e instalando el launcher (5-10 minutos la primera vez)'
   ES_GOOGLE_TV=$(tv 'pm list packages com.google.android.apps.tv.launcherx')
   echo '  Ayudante de botones del control: devuelve la funcion a botones como Ajustes (engrane) o YouTube'
   echo '  que dependian del inicio de fabrica. En algunos Google TV hace que mantener pulsado el volumen'
   echo '  suba de uno en uno. Se puede desactivar luego en Ajustes > Accesibilidad.'
   if [[ "$ES_GOOGLE_TV" == *launcherx* ]]; then DEF_AYUDANTE=s; else DEF_AYUDANTE=n; fi
   if sino '¿Activar el ayudante de botones?' "$DEF_AYUDANTE"; then AYUDANTE=1; else AYUDANTE=0; fi
+  if [ "$AYUDANTE" -eq 1 ]; then
+    echo '  Por seguridad, el ayudante se activa despues de comprobar con un reinicio que el launcher por si'
+    echo '  solo arranca bien: activarlo en el mismo paso que el cambio de inicio ha dejado televisores'
+    echo '  congelados en el arranque antes de ahora (docs/TROUBLESHOOTING.md).'
+  fi
   (
     cd "$PROYECTO/launcher"
-    TV_HOST="$TV_IP" HOME_KEY_SERVICE="$AYUDANTE" ./build-and-install.sh
+    TV_HOST="$TV_IP" ./build-and-install.sh
   ) || falla 'La instalacion del launcher se detuvo (revisa el mensaje de arriba). El inicio de fabrica se dejo como estaba.'
   ok 'Launcher instalado y elegido como inicio'
 
-  titulo '7/9  Permisos de las funciones PS4'
+  reinicio_de_verificacion '7/10  Reinicio de comprobacion (launcher)' \
+    'Se reinicia el televisor para confirmar que arranca bien con el nuevo launcher antes de seguir.'
+
+  if [ "$AYUDANTE" -eq 1 ]; then
+    if (cd "$PROYECTO/launcher" && TV_HOST="$TV_IP" HOME_KEY_SERVICE=1 ./build-and-install.sh); then
+      ok 'Ayudante de botones activado'
+      reinicio_de_verificacion '7/10  Reinicio de comprobacion (ayudante de botones)' \
+        'Se reinicia otra vez para confirmar que el ayudante de botones no afecta al arranque.'
+    else
+      aviso 'No se pudo activar el ayudante de botones. El launcher sigue instalado y es el inicio; se continua sin el.'
+    fi
+  fi
+
+  titulo '8/10  Permisos de las funciones PS4'
   echo '  - Notificaciones: para la pantalla de notificaciones y el reproductor de musica.'
   echo '  - Uso de apps: para poner primero la ultima app abierta y el disco girando.'
   echo '  - Bluetooth: para ver tus dispositivos conectados.'
@@ -448,7 +556,7 @@ fi
 # 8. Tu tema: nombre, fondo y foto
 # ------------------------------------------------------------------------------------------------
 
-titulo '8/9  Tu tema PS4'
+titulo '9/10  Tu tema PS4'
 
 TEMA="$HOME/Tema-PS4"
 mkdir -p "$TEMA"
@@ -541,7 +649,7 @@ json.dump({'tv': sys.argv[1], 'lista': sys.argv[2], 'backup': sys.argv[3], 'tema
 # 9. Cerrar ADB
 # ------------------------------------------------------------------------------------------------
 
-titulo '9/9  Cerrar el acceso ADB (recomendado)'
+titulo '10/10  Cerrar el acceso ADB (recomendado)'
 echo '  Mientras ADB este abierto, cualquier equipo de tu red puede controlar el televisor.'
 echo '  El launcher sigue funcionando con ADB cerrado. Para cambiar el tema mas adelante, vuelve a activar'
 echo '  la depuracion en el televisor y ejecuta:  ./instalar.sh --tv '"$TV_IP"' --solo-tema'
@@ -558,21 +666,22 @@ if sino '¿Cerrar ADB ahora? (el televisor se reiniciara)' s; then
       aviso 'La depuracion inalambrica sigue abierta: apagala en el televisor.'
     fi
   fi
-  paso 'Apagando la depuracion y reiniciando el televisor ...'
+  paso 'Apagando la depuracion y reiniciando el televisor (ya se comprobo antes que arranca bien) ...'
   tv 'settings put global adb_enabled 0; reboot' >/dev/null
-  echo '  Esperando a que el televisor vuelva a arrancar (hasta 2 minutos) ...'
-  CERRADO=0
-  for _ in $(seq 1 24); do
-    sleep 5
-    if TV_HOST="$TV_IP" "$VENV_PY" -I "$PROYECTO/tools/adb-closed.py" "$TV_IP" >/dev/null 2>&1; then CERRADO=1; break; fi
-  done
-  if [ "$CERRADO" -eq 1 ]; then
+  echo '  Esperando a que el televisor vuelva a arrancar (hasta 3 minutos) ...'
+  if esperar_televisor 3 "TV_HOST=\"\$TV_IP\" \"$VENV_PY\" -I \"$PROYECTO/tools/adb-closed.py\" \"\$TV_IP\" >/dev/null 2>&1"; then
     ok 'El puerto 5555 esta cerrado: ADB quedo desactivado.'
-  else
-    aviso 'No pude confirmar que el puerto 5555 este cerrado.'
+  elif [ "$VISTO_EN_RED" -eq 1 ]; then
+    aviso 'El televisor responde en la red pero no pude confirmar que el puerto 5555 este cerrado.'
     echo '  En el televisor: Opciones para desarrolladores > desactiva Depuracion USB, Depuracion de red e'
     echo '  inalambrica y "Revocar autorizaciones de depuracion". Despues comprueba con:'
     echo "     tools/venv/bin/python tools/adb-closed.py $TV_IP"
+  else
+    echo
+    echo '  [!] El televisor no respondio en absoluto tras este reinicio (ni siquiera por la red).'
+    echo '      Como ya se comprobo antes que arranca bien con estos mismos cambios, esto suele ser solo'
+    echo '      un arranque lento: espera unos minutos y mira la pantalla del televisor.'
+    echo '      Si no reacciona nunca, desenchufalo 30 segundos: nada se desinstalo ni se perdio.'
   fi
 else
   aviso 'ADB sigue abierto. Cierralo cuando termines (Opciones para desarrolladores).'

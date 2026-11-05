@@ -22,6 +22,11 @@ judged before TV_HOST is read, so a typo names the usage instead of the TV's add
 
 Set TV_ADB_BINARY to the Google adb executable to use an already connected, paired transport
 (including encrypted Wireless debugging). See tools/native-adb.md.
+
+Set TV_CONNECT_TIMEOUT_S to lower the connect/auth timeout below its 120s default, e.g. for a script
+that retries the connection itself every few seconds and would otherwise sit silently for up to 120s
+on each attempt with nothing printed - which reads as the script having frozen, not the TV. Ignored by
+a caller that passes its own connect(timeout=...).
 """
 import errno
 import os
@@ -304,7 +309,9 @@ class NativeAdbDevice:
         pass  # Each subprocess is closed; leave the shared ADB server and transport alone.
 
 
-def connect(timeout=120):
+def connect(timeout=None):
+    if timeout is None:
+        timeout = float(os.environ.get("TV_CONNECT_TIMEOUT_S", "120"))
     binary = os.environ.get("TV_ADB_BINARY")
     if binary:
         return NativeAdbDevice(binary, HOST, PORT, timeout)

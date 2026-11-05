@@ -7,6 +7,12 @@
   (opcionalmente) limpia el software de fábrica, compila e instala el launcher desde el código fuente,
   aplica tu tema y, al final, cierra el acceso ADB.
 
+  El televisor se reinicia 2 o 3 veces durante el proceso (no solo al final): cada reinicio
+  intermedio comprueba, con ADB todavía activo, que el televisor arranca bien antes de aplicar el
+  siguiente cambio. Esto evita quedarse con un televisor congelado en el arranque y sin ADB para
+  recuperarlo, que es justo lo que puede pasar si el "ayudante de botones" se activa en el mismo
+  paso que el cambio de inicio (ver docs\TROUBLESHOOTING.md).
+
   Uso (doble clic en instalar.bat, o desde PowerShell):
       .\instalar.ps1
       .\instalar.ps1 -TvIp 192.168.1.50            # sin buscar el televisor
@@ -120,7 +126,7 @@ if (-not (SiNo '¿Listo para empezar?' $true)) { exit 0 }
 # 1. Herramientas del ordenador (sin administrador)
 # ---------------------------------------------------------------------------------------------------------------
 
-Titulo '1/9  Preparando las herramientas de este ordenador'
+Titulo '1/10  Preparando las herramientas de este ordenador'
 
 $libre = (Get-PSDrive -Name ($env:LOCALAPPDATA.Substring(0, 1))).Free
 if ($libre -lt 4GB) { Aviso ("Quedan {0:N1} GB libres; se recomiendan 4 GB (Java + Android SDK + compilación)." -f ($libre / 1GB)) }
@@ -191,10 +197,16 @@ $env:ANDROID_SDK_ROOT = $sdk
 if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0')) -or -not (Test-Path (Join-Path $sdk 'platforms\android-34')) -or
     -not (Test-Path (Join-Path $sdk 'platform-tools\adb.exe'))) {
     Paso 'Aceptando licencias y descargando Android 14 (SDK 34), build-tools y ADB (~350 MB) ...'
+    # 2>&1 (no *> $null ni 2>$null): sdkmanager escribe avisos de red normales en su salida de error, y con
+    # $ErrorActionPreference = 'Stop' eso detiene todo el script con un "NativeCommandError" aunque sdkmanager
+    # siga funcionando bien; fundir la salida de error con la normal evita que PowerShell la trate como un
+    # error que para el script. El resultado solo se comprueba después, con Test-Path.
     $si = ('y' + [Environment]::NewLine) * 30
-    $si | & $sdkmanager --sdk_root="$sdk" --licenses *> $null
-    & $sdkmanager --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools' | Out-Null
-    if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0'))) { Falla 'sdkmanager no instaló build-tools 34.0.0.' }
+    $si | & $sdkmanager --sdk_root="$sdk" --licenses 2>&1 | Out-Null
+    & $sdkmanager --sdk_root="$sdk" 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools' 2>&1 | Out-Null
+    if (-not (Test-Path (Join-Path $sdk 'build-tools\34.0.0'))) {
+        Falla 'sdkmanager no instaló build-tools 34.0.0 (revisa el registro: puede ser un corte de red al descargar).'
+    }
 }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
 $env:PATH = "$(Join-Path $sdk 'platform-tools');$env:JAVA_HOME\bin;$env:PATH"
@@ -204,7 +216,7 @@ Ok "Android SDK y ADB: $sdk"
 # 2. El proyecto
 # ---------------------------------------------------------------------------------------------------------------
 
-Titulo '2/9  Descargando el proyecto'
+Titulo '2/10  Descargando el proyecto'
 
 $Proyecto = $null
 if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'launcher\build-and-install.ps1'))) {
@@ -230,10 +242,15 @@ Set-Location $Proyecto
 $venvPy = Join-Path $Proyecto 'tools\venv\Scripts\python.exe'
 if (-not (Test-Path $venvPy)) {
     Paso 'Creando el entorno de Python de las herramientas ...'
-    & $python -m venv (Join-Path $Proyecto 'tools\venv')
+    # 2>&1: ver el comentario junto a sdkmanager más arriba. python -m venv también puede escribir avisos
+    # en su salida de error sin que eso signifique un fallo real.
+    & $python -m venv (Join-Path $Proyecto 'tools\venv') 2>&1
     if ($LASTEXITCODE -ne 0) { Falla 'No se pudo crear tools\venv.' }
 }
-& $venvPy -m pip install --quiet --disable-pip-version-check -r (Join-Path $Proyecto 'tools\requirements.txt')
+# pip es especialmente dado a escribir avisos (reintentos de red, paquetes obsoletos) en su salida de
+# error; sin 2>&1 cualquiera de esos avisos detendría el instalador entero por el $ErrorActionPreference
+# de arriba, aunque pip hubiera terminado bien.
+& $venvPy -m pip install --quiet --disable-pip-version-check -r (Join-Path $Proyecto 'tools\requirements.txt') 2>&1
 if ($LASTEXITCODE -ne 0) { Falla 'pip no pudo instalar tools\requirements.txt.' }
 Ok 'Herramientas de Python listas'
 
@@ -242,12 +259,84 @@ function Tv([string]$comando) {
     $script:tvCodigo = $LASTEXITCODE
     return ($out | Out-String).Trim()
 }
+function Probar-Adb([int]$intentos = 6, [int]$espera = 5) {
+    $probe = ''
+    for ($i = 1; $i -le $intentos; $i++) {
+        # TV_CONNECT_TIMEOUT_S (fijado más abajo) acota cada intento a unos segundos: sin esto, un
+        # intento podía quedarse hasta 120s sin imprimir nada, y eso se ve igual que un script congelado
+        # aunque el televisor estuviera bien.
+        Write-Host "    (intento $i de $intentos; cada uno tarda hasta $($env:TV_CONNECT_TIMEOUT_S)s) ..." -ForegroundColor DarkGray
+        $probe = Tv '--probe'
+        if ($tvCodigo -eq 0) { break }
+        Start-Sleep -Seconds $espera
+    }
+    return $probe
+}
+function Ping-Responde([string]$ip) {
+    try { return ((New-Object Net.NetworkInformation.Ping).Send($ip, 800).Status -eq 'Success') } catch { return $false }
+}
+# Espera hasta $minutos a que $listo devuelva $true, comprobando cada 5s. Mientras espera, recuerda si
+# el televisor llegó a responder en la red (aunque $listo no se cumpliera): eso distingue "sigue
+# arrancando, solo tarda" de "no reacciona nada" cuando se agota el tiempo.
+function Esperar-Televisor([int]$minutos, [scriptblock]$listo) {
+    $script:ultimoVistoEnRed = $false
+    $fin = (Get-Date).AddSeconds($minutos * 60)
+    while ((Get-Date) -lt $fin) {
+        Start-Sleep -Seconds 5
+        if (-not $script:ultimoVistoEnRed -and (Ping-Responde $TvIp)) {
+            $script:ultimoVistoEnRed = $true
+            Write-Host '    (el televisor ya responde en la red; esperando a que termine de arrancar)' -ForegroundColor DarkGray
+        }
+        if (& $listo) { return $true }
+    }
+    return $false
+}
+# Reinicia el televisor con ADB todavía activo y comprueba que vuelve a arrancar con el nuevo launcher
+# como inicio, antes de aplicar el siguiente cambio. Si el televisor no responde, nunca cierra ADB por
+# su cuenta: el ordenador sigue teniendo acceso para diagnosticar o deshacer el paso.
+function Reinicio-DeVerificacion([string]$titulo, [string]$motivo) {
+    Titulo $titulo
+    Write-Host "  $motivo"
+    Write-Host '  La depuración ADB sigue activa durante este reinicio: si algo va mal, este ordenador podrá' -ForegroundColor DarkGray
+    Write-Host '  reconectarse y deshacer el cambio. ADB no se cierra hasta el último paso del instalador.' -ForegroundColor DarkGray
+    Tv 'reboot' | Out-Null
+    Start-Sleep -Seconds 10
+    $puertoListo = { Puerto-Abierto $TvIp 5555 1000 }
+    if (-not (Esperar-Televisor 3 $puertoListo)) {
+        Write-Host ''
+        Write-Host '  [!] El televisor no respondió por ADB en 3 minutos tras reiniciar.' -ForegroundColor Red
+        if ($script:ultimoVistoEnRed) {
+            Write-Host '      Sigue respondiendo en la red (no está totalmente congelado), pero ADB no vuelve.' -ForegroundColor Yellow
+        } else {
+            Write-Host '      No responde ni siquiera en la red: puede estar congelado en la animación de arranque.' -ForegroundColor Yellow
+        }
+        Write-Host '      - Si el televisor suele tardar en arrancar, dale un poco más de tiempo.' -ForegroundColor Yellow
+        Write-Host '      - Si no reacciona, desenchúfalo 30 segundos y enchúfalo de nuevo: ADB seguía activo y' -ForegroundColor Yellow
+        Write-Host '        nada se ha desinstalado, así que un corte de corriente no pierde ningún cambio.' -ForegroundColor Yellow
+        if (-not (SiNo '  ¿Sigo esperando 3 minutos más?' $true)) {
+            Falla 'Instalación detenida: el televisor no respondió tras el reinicio de comprobación.'
+        }
+        if (-not (Esperar-Televisor 3 $puertoListo)) {
+            Falla "El televisor sigue sin responder por ADB tras reiniciar; no se continúa para no arriesgar más cambios encima.`n      Cuando vuelva a responder, revisa con:  `$env:TV_HOST='$TvIp'; tools\venv\Scripts\python.exe tools\tv.py --probe"
+        }
+    }
+    $probe = Probar-Adb
+    if ($tvCodigo -ne 0) { Falla "El televisor respondió en la red pero no por ADB tras reiniciar (puede que haya que aceptar otra vez la depuración en pantalla):`n$probe" }
+    $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+    if ($homeAhora -notmatch 'com\.gathin\.tvhome') {
+        Aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvió a '$homeAhora')."
+        Write-Host '  En Google TV esto suele significar que la pantalla de configuración (setupwraith) también reclama' -ForegroundColor Yellow
+        Write-Host '  el inicio: añádela a tu lista de limpieza (ver README, Solución de problemas) y repite el instalador.' -ForegroundColor Yellow
+        Falla 'Se detiene aquí para no cerrar ADB con un inicio que no es el correcto. Repite el instalador o usa desinstalar.ps1.'
+    }
+    Ok 'El televisor arrancó bien tras reiniciar: el inicio sigue siendo el nuevo launcher.'
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 # 3. Encontrar y conectar el televisor
 # ---------------------------------------------------------------------------------------------------------------
 
-Titulo '3/9  Conectando con el televisor'
+Titulo '3/10  Conectando con el televisor'
 
 function Puerto-Abierto([string]$ip, [int]$puerto, [int]$ms = 400) {
     $c = New-Object Net.Sockets.TcpClient
@@ -280,6 +369,11 @@ if (-not $TvIp) {
 }
 if ($TvIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Falla "'$TvIp' no parece una dirección IP." }
 $env:TV_HOST = $TvIp
+# Sin esto, tools\tv.py espera hasta 120s por intento para conectar, sin imprimir nada mientras tanto:
+# en una conexión lenta o justo tras un reinicio, eso se ve exactamente igual que un script congelado,
+# aunque el televisor esté bien. 20s de margen por intento es de sobra en una red local, y los reintentos
+# del propio instalador cubren el resto de la espera, con un mensaje antes de cada uno.
+$env:TV_CONNECT_TIMEOUT_S = '20'
 
 if (-not (Puerto-Abierto $TvIp 5555 1500)) {
     Aviso "El puerto 5555 de $TvIp está cerrado."
@@ -288,10 +382,11 @@ if (-not (Puerto-Abierto $TvIp 5555 1500)) {
     if (SiNo '¿Quieres vincularlo ahora con el código que muestra el televisor?' $true) {
         $vinc = Pregunta 'IP y puerto de VINCULACIÓN que muestra la TV (ej. 192.168.1.50:37123)'
         $codigo = Pregunta 'Código de 6 dígitos'
-        & $adb pair $vinc $codigo
+        # 2>&1 en cada llamada a adb.exe: ver el comentario junto a sdkmanager más arriba.
+        & $adb pair $vinc $codigo 2>&1
         $con = Pregunta 'IP y puerto de CONEXIÓN de la pantalla de Depuración inalámbrica (ej. 192.168.1.50:41235)'
-        & $adb connect $con | Out-Host
-        & $adb -s $con tcpip 5555 | Out-Host
+        & $adb connect $con 2>&1 | Out-Host
+        & $adb -s $con tcpip 5555 2>&1 | Out-Host
         Start-Sleep -Seconds 4
     }
     if (-not (Puerto-Abierto $TvIp 5555 2000)) {
@@ -305,12 +400,7 @@ if (-not (Puerto-Abierto $TvIp 5555 1500)) {
 Write-Host ''
 Write-Host '  >>> Mira el televisor: si aparece "¿Permitir la depuración USB?", marca' -ForegroundColor Yellow
 Write-Host '      "Permitir siempre desde este ordenador" y pulsa PERMITIR.' -ForegroundColor Yellow
-$probe = ''
-for ($i = 1; $i -le 6; $i++) {
-    $probe = Tv '--probe'
-    if ($tvCodigo -eq 0) { break }
-    Start-Sleep -Seconds 5
-}
+$probe = Probar-Adb
 if ($tvCodigo -ne 0) { Falla "No se pudo hablar con el televisor:`n$probe" }
 $modelo = (Tv 'getprop ro.product.model')
 $marca = (Tv 'getprop ro.product.brand')
@@ -328,7 +418,7 @@ if ($sdkTv -lt 26) {
 $seguro = ($modelo -replace '[^A-Za-z0-9_-]', '_')
 $backup = Join-Path $Proyecto ("backup\$seguro-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 if (-not $SoloTema) {
-    Titulo '4/9  Copia de seguridad del televisor'
+    Titulo '4/10  Copia de seguridad del televisor'
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
     (Tv 'pm list packages -f') | Set-Content -Encoding UTF8 (Join-Path $backup 'paquetes.txt')
     (Tv 'pm list packages -d') | Set-Content -Encoding UTF8 (Join-Path $backup 'desactivados.txt')
@@ -345,7 +435,7 @@ if (-not $SoloTema) {
 
 $listaUsada = ''
 if (-not $SoloTema -and -not $SinLimpieza) {
-    Titulo '5/9  Limpieza de apps de fábrica (opcional)'
+    Titulo '5/10  Limpieza de apps de fábrica (opcional)'
     Write-Host '  El proyecto trae listas probadas por modelo. Solo DESACTIVAN apps de rastreo y publicidad;'
     Write-Host '  no borran nada y desinstalar.ps1 lo deshace. Nunca tocan HDMI, el control, el teclado ni Play Store.'
     $candidatos = @()
@@ -393,18 +483,20 @@ if (-not $SoloTema -and -not $SinLimpieza) {
 # ---------------------------------------------------------------------------------------------------------------
 
 if (-not $SoloTema) {
-    Titulo '6/9  Compilando e instalando el launcher (5-10 minutos la primera vez)'
+    Titulo '6/10  Compilando e instalando el launcher (5-10 minutos la primera vez)'
     $esGoogleTv = (Tv 'pm list packages com.google.android.apps.tv.launcherx') -match 'launcherx'
-    $ayudante = $false
     Write-Host '  Ayudante de botones del control: devuelve la función a botones como Ajustes (engrane) o YouTube'
     Write-Host '  que dependían del inicio de fábrica. En algunos Google TV hace que mantener pulsado el volumen'
     Write-Host '  suba de uno en uno. Se puede desactivar luego en Ajustes > Accesibilidad.'
     $ayudante = SiNo '¿Activar el ayudante de botones?' $esGoogleTv
-    $parametros = @{ TvHost = $TvIp }
-    if ($ayudante) { $parametros.HomeKeyService = $true }
+    if ($ayudante) {
+        Write-Host '  Por seguridad, el ayudante se activa después de comprobar con un reinicio que el launcher' -ForegroundColor DarkGray
+        Write-Host '  por sí solo arranca bien: activarlo en el mismo paso que el cambio de inicio ha dejado' -ForegroundColor DarkGray
+        Write-Host '  televisores congelados en el arranque antes de ahora (docs\TROUBLESHOOTING.md).' -ForegroundColor DarkGray
+    }
     Push-Location (Join-Path $Proyecto 'launcher')
     try {
-        & (Join-Path $Proyecto 'launcher\build-and-install.ps1') @parametros
+        & (Join-Path $Proyecto 'launcher\build-and-install.ps1') -TvHost $TvIp
     } catch {
         Pop-Location
         Falla "La instalación del launcher se detuvo: $($_.Exception.Message)`n      El inicio de fábrica se dejó como estaba."
@@ -412,7 +504,28 @@ if (-not $SoloTema) {
     Pop-Location
     Ok 'Launcher instalado y elegido como inicio'
 
-    Titulo '7/9  Permisos de las funciones PS4'
+    Reinicio-DeVerificacion '7/10  Reinicio de comprobación (launcher)' `
+        'Se reinicia el televisor para confirmar que arranca bien con el nuevo launcher antes de seguir.'
+
+    if ($ayudante) {
+        $ayudanteOk = $true
+        Push-Location (Join-Path $Proyecto 'launcher')
+        try {
+            & (Join-Path $Proyecto 'launcher\build-and-install.ps1') -TvHost $TvIp -HomeKeyService
+        } catch {
+            $ayudanteOk = $false
+            Aviso "No se pudo activar el ayudante de botones: $($_.Exception.Message)"
+            Write-Host '  El launcher sigue instalado y es el inicio; se continúa sin el ayudante de botones.' -ForegroundColor Yellow
+        }
+        Pop-Location
+        if ($ayudanteOk) {
+            Ok 'Ayudante de botones activado'
+            Reinicio-DeVerificacion '7/10  Reinicio de comprobación (ayudante de botones)' `
+                'Se reinicia otra vez para confirmar que el ayudante de botones no afecta al arranque.'
+        }
+    }
+
+    Titulo '8/10  Permisos de las funciones PS4'
     Write-Host '  - Notificaciones: para la pantalla de notificaciones y el reproductor de música.'
     Write-Host '  - Uso de apps: para poner primero la última app abierta y el disco girando.'
     Write-Host '  - Bluetooth: para ver tus dispositivos conectados.'
@@ -428,7 +541,7 @@ if (-not $SoloTema) {
 # 8. Tu tema: nombre, fondo y foto
 # ---------------------------------------------------------------------------------------------------------------
 
-Titulo '8/9  Tu tema PS4'
+Titulo '9/10  Tu tema PS4'
 Add-Type -AssemblyName System.Drawing
 
 function Guardar-Jpg([string]$origen, [string]$destino, [int]$ancho, [int]$alto) {
@@ -509,36 +622,42 @@ if (Test-Path $foto) { Ok "Captura del resultado: $foto"; Invoke-Item $foto }
 # 9. Cerrar ADB
 # ---------------------------------------------------------------------------------------------------------------
 
-Titulo '9/9  Cerrar el acceso ADB (recomendado)'
+Titulo '10/10  Cerrar el acceso ADB (recomendado)'
 Write-Host '  Mientras ADB esté abierto, cualquier equipo de tu red puede controlar el televisor.'
 Write-Host '  El launcher sigue funcionando con ADB cerrado. Para cambiar el tema más adelante, vuelve a activar'
-Write-Host '  la depuración en el televisor y ejecuta:  .\instalar.ps1 -SoloTema'
+Write-Host "  la depuración en el televisor y ejecuta:  .\instalar.ps1 -TvIp $TvIp -SoloTema"
 if (SiNo '¿Cerrar ADB ahora? (el televisor se reiniciará)' $true) {
     # Depuración inalámbrica: su puerto cambia en cada arranque, así que se comprueba antes de reiniciar.
-    $inalam = (& $adb mdns services 2>$null) -join "`n"
+    # 2>&1, no 2>$null: ver el comentario junto a sdkmanager más arriba.
+    $inalam = (& $adb mdns services 2>&1) -join "`n"
     $puertoInal = $null
     if ($inalam -match [regex]::Escape($TvIp) + ':(\d+)') { $puertoInal = $Matches[1] }
     Tv 'settings put global adb_wifi_enabled 0' | Out-Null
     if ($puertoInal) {
         Start-Sleep -Seconds 2
-        & $venvPy -I (Join-Path $Proyecto 'tools\adb-closed.py') $TvIp $puertoInal
+        & $venvPy -I (Join-Path $Proyecto 'tools\adb-closed.py') $TvIp $puertoInal 2>&1
         if ($LASTEXITCODE -eq 0) { Ok "Depuración inalámbrica cerrada (puerto $puertoInal)" } else { Aviso 'La depuración inalámbrica sigue abierta: apágala en el televisor.' }
     }
-    Paso 'Apagando la depuración y reiniciando el televisor ...'
+    Paso 'Apagando la depuración y reiniciando el televisor (ya se comprobó antes que arranca bien) ...'
     Tv 'settings put global adb_enabled 0; reboot' | Out-Null
-    Write-Host '  Esperando a que el televisor vuelva a arrancar (hasta 2 minutos) ...'
-    $cerrado = $false
-    for ($i = 0; $i -lt 24; $i++) {
-        Start-Sleep -Seconds 5
-        & $venvPy -I (Join-Path $Proyecto 'tools\adb-closed.py') $TvIp 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) { $cerrado = $true; break }
-    }
-    if ($cerrado) { Ok 'El puerto 5555 está cerrado: ADB quedó desactivado.' }
-    else {
-        Aviso 'No pude confirmar que el puerto 5555 esté cerrado.'
+    Write-Host '  Esperando a que el televisor vuelva a arrancar (hasta 3 minutos) ...'
+    # adb-closed.py también puede escribir avisos en su salida de error ("no pude comprobarlo todavía")
+    # mientras el televisor sigue reiniciando: 2>&1 evita que esos avisos, por sí solos, detengan el script.
+    $cerradoListo = { (& $venvPy -I (Join-Path $Proyecto 'tools\adb-closed.py') $TvIp 2>&1 | Out-Null); $LASTEXITCODE -eq 0 }
+    $cerrado = Esperar-Televisor 3 $cerradoListo
+    if ($cerrado) {
+        Ok 'El puerto 5555 está cerrado: ADB quedó desactivado.'
+    } elseif ($script:ultimoVistoEnRed) {
+        Aviso 'El televisor responde en la red pero no pude confirmar que el puerto 5555 esté cerrado.'
         Write-Host '  En el televisor: Opciones para desarrolladores > desactiva Depuración USB, Depuración de red e'
         Write-Host '  inalámbrica y "Revocar autorizaciones de depuración". Después comprueba con:'
         Write-Host "     tools\venv\Scripts\python.exe tools\adb-closed.py $TvIp"
+    } else {
+        Write-Host ''
+        Write-Host '  [!] El televisor no respondió en absoluto tras este reinicio (ni siquiera por la red).' -ForegroundColor Red
+        Write-Host '      Como ya se comprobó antes que arranca bien con estos mismos cambios, esto suele ser' -ForegroundColor Yellow
+        Write-Host '      solo un arranque lento: espera unos minutos y mira la pantalla del televisor.' -ForegroundColor Yellow
+        Write-Host '      Si no reacciona nunca, desenchúfalo 30 segundos: nada se desinstaló ni se perdió.' -ForegroundColor Yellow
     }
 } else {
     Aviso 'ADB sigue abierto. Ciérralo cuando termines (Opciones para desarrolladores).'

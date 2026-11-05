@@ -35,7 +35,10 @@ Write-Host ''
 Write-Host "  Deshaciendo la instalación PS4 en $TvIp" -ForegroundColor Cyan
 Write-Host '  Personalizado por JeisonCadenaC' -ForegroundColor DarkGray
 Write-Host '  Si el televisor pregunta "¿Permitir la depuración USB?", acepta.' -ForegroundColor Yellow
-& $venvPy -I (Join-Path $Proyecto 'tools\tv.py') --probe
+# 2>&1: cuando el televisor no responde, tv.py escribe el motivo en su salida de error, y sin fundirla
+# con la normal, $ErrorActionPreference = 'Stop' detendría este script con un error críptico en vez de
+# dejar que la comprobación de abajo (que es justo el caso que se está probando) lo explique bien.
+& $venvPy -I (Join-Path $Proyecto 'tools\tv.py') --probe 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Host '  No hay conexión ADB: activa la depuración en el televisor y vuelve a intentarlo.' -ForegroundColor Red; exit 1 }
 
 Write-Host '  > Quitando el tema ...'
