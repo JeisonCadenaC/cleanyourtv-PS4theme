@@ -86,6 +86,14 @@ final class ClockScene {
                 glow.setGradientRadius((r - l) * 0.55f));
         colorIndex = random.nextInt(PALETTE.length);
         setGlow(PALETTE[colorIndex]);
+        // The clock's own minute tick (native from Android 12, ClockRefresh before it) widens the hour from
+        // one digit to two (9:45 -> 10:45) independently of moveClock()'s 60s schedule: a spot picked for the
+        // narrower text can sit close enough to the right or bottom edge that the wider text then overflows
+        // the screen until the next scheduled move, up to a minute later. Reclamp as soon as the size changes,
+        // not only when placeClock() next runs.
+        content.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if ((r - l) != (or - ol) || (b - t) != (ob - ot)) clampClock();
+        });
     }
 
     void start() {
@@ -247,6 +255,17 @@ final class ClockScene {
             glow.setGradientCenter((x + content.getWidth() / 2f) / parent.getWidth(),
                     (y + content.getHeight() / 2f) / parent.getHeight());
         }
+    }
+
+    /** Pulls the clock back onto screen if it grew (or shrank) past where it last fit, without picking a new spot. */
+    private void clampClock() {
+        View parent = (View) content.getParent();
+        int maxX = Math.max(0, parent.getWidth() - content.getWidth());
+        int maxY = Math.max(0, parent.getHeight() - content.getHeight());
+        float x = Math.min(content.getX(), maxX);
+        float y = Math.min(content.getY(), maxY);
+        if (x != content.getX()) content.setX(x);
+        if (y != content.getY()) content.setY(y);
     }
 
     private void shiftGlow() {

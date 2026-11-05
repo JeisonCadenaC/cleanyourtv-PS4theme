@@ -708,8 +708,21 @@ final class Ps4Home {
 
     private void togglePlay() {
         if (media == null || media.getPlaybackState() == null) return;
-        if (media.getPlaybackState().getState() == PlaybackState.STATE_PLAYING) media.getTransportControls().pause();
-        else media.getTransportControls().play();
+        if (media.getPlaybackState().getState() == PlaybackState.STATE_PLAYING) {
+            media.getTransportControls().pause();
+            return;
+        }
+        MediaController target = media;
+        target.getTransportControls().play();
+        // Once an app's process has been killed in the background (common on a 1 GB TV), its session can
+        // linger showing the last song with play() silently doing nothing: there is nothing left running to
+        // resume. If playback still has not started shortly after, wake the app properly by opening it -
+        // the same as tapping its tile - instead of leaving the button looking broken.
+        handler.postDelayed(() -> {
+            if (media != target) return;   // a different session took over meanwhile
+            PlaybackState st = target.getPlaybackState();
+            if (st == null || st.getState() != PlaybackState.STATE_PLAYING) openMediaApp();
+        }, 1200);
     }
 
     private void openMediaApp() {
@@ -1071,7 +1084,11 @@ final class Ps4Home {
         date.setLetterSpacing(0.08f);
         date.setTextColor(accent);
         date.setIncludeFontPadding(false);
-        box.addView(date, new LinearLayout.LayoutParams(-1, -2));
+        // wrap_content + setMaxWidth, not match_parent: see the comment on idleGreeting below for why a
+        // match_parent child here can silently draw past box's own bounds for a long enough date (a month
+        // name longer than "mayo") instead of wrapping.
+        date.setMaxWidth(px(700));
+        box.addView(date, new LinearLayout.LayoutParams(-2, -2));
         TextClock big = new TextClock(a);
         big.setFormat12Hour("h:mm");
         big.setFormat24Hour("H:mm");
@@ -1079,7 +1096,11 @@ final class Ps4Home {
         big.setTypeface(bebas);
         big.setTextColor(Ps4.TEXT);
         big.setIncludeFontPadding(false);
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
+        big.setSingleLine(true);
+        // Wrap, not match_parent: at match_parent width inside the box below, a two-digit hour ("11:42") was
+        // wider than the box's old fixed 470px and wrapped onto a second line ("11:4" / "2") that landed on
+        // top of the greeting underneath it, instead of just taking the room it needs.
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-2, -2);
         cp.topMargin = px(4);
         box.addView(big, cp);
         View rule = new View(a);
@@ -1088,16 +1109,25 @@ final class Ps4Home {
         rp.topMargin = -px(34);   // Bebas leaves a tall gap under its figures
         rp.bottomMargin = px(26);
         box.addView(rule, rp);
-        idleGreeting = Ps4.text(a, 56, bebas, Ps4.TEXT);
-        idleGreeting.setSingleLine(false);
+        // Not Ps4.text() (it leaves a one-line-tall measurement a later setSingleLine(false) does not undo), and
+        // not match_parent inside box: box is wrap_content, so a match_parent child there is measured with no
+        // real width limit (AT_MOST the whole screen), draws its single line at that width without ever needing
+        // to wrap onto the second line maxLines allows, and then box - sized to the clock above it, not to this
+        // line - clips whatever did not fit. setMaxWidth gives it a real limit to wrap against instead.
+        idleGreeting = new TextView(a);
+        idleGreeting.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, px(56));
+        idleGreeting.setTypeface(bebas);
+        idleGreeting.setTextColor(Ps4.TEXT);
+        idleGreeting.setIncludeFontPadding(false);
         idleGreeting.setMaxLines(2);
+        idleGreeting.setMaxWidth(px(700));
         idleGreeting.setLetterSpacing(0.02f);
         idleGreeting.setLineSpacing(0, 0.95f);
-        box.addView(idleGreeting, new LinearLayout.LayoutParams(-1, -2));
+        box.addView(idleGreeting, new LinearLayout.LayoutParams(-2, -2));
         for (TextView v : new TextView[]{date, big, idleGreeting}) v.setShadowLayer(px(14), 0, px(3), 0x99000000);
-        // Left edge at x=110 and 470 wide, so even "12:59" ends well before the figure in the middle of the wallpaper;
-        // centred a little above the middle, leaving the bottom to the player.
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(px(470), -2, Gravity.START | Gravity.CENTER_VERTICAL);
+        // Left edge at x=110, as wide as the clock needs (wrap_content: see big's own comment above) so it is
+        // never cut short, which in practice still ends well before the figure in the middle of the wallpaper.
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.START | Gravity.CENTER_VERTICAL);
         bp.leftMargin = px(110);
         bp.bottomMargin = px(120);
         idleLayer.addView(box, bp);
