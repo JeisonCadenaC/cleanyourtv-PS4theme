@@ -333,9 +333,30 @@ $PROBE"
   HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
   if [[ "$HOME_AHORA" != *com.gathin.tvhome* ]]; then
     aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvio a '$HOME_AHORA')."
-    echo '  En Google TV esto suele significar que la pantalla de configuracion (setupwraith) tambien reclama'
-    echo '  el inicio: anadela a tu lista de limpieza (ver README, Solucion de problemas) y repite el instalador.'
-    falla 'Se detiene aqui para no cerrar ADB con un inicio que no es el correcto. Repite el instalador o usa desinstalar.sh.'
+    # Placas TCL (TclAppBoot): el gestor de arranque del fabricante exige un permiso propio para dejar
+    # correr una app al arrancar; sin el, cada reinicio devuelve el inicio a su launcher de fabrica pase lo
+    # que pase con "set-home-activity". docs/devices/tcl-tc8000-ay30a2.md documenta el mismo sintoma y este
+    # arreglo (concederlo y volver a intentar), asi que se prueba solo antes de rendirse.
+    if [[ "$(printf '%s' "$MARCA" | tr '[:upper:]' '[:lower:]')" == *tcl* ]]; then
+      echo '  Esto es un comportamiento conocido en algunas placas TCL: su gestor de arranque propio exige'
+      echo '  un permiso especial para dejar correr una app nueva al arrancar. Probando a concederlo y'
+      echo '  reintentando...'
+      tv 'cmd appops set com.gathin.tvhome AUTO_START allow' >/dev/null
+      tv 'cmd appops set com.gathin.tvhome APP_AUTO_START allow' >/dev/null
+      tv 'cmd appops set com.gathin.tvhome APP_ASSOC_START allow' >/dev/null
+      tv 'appops write-settings' >/dev/null
+      tv 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity' >/dev/null
+      tv 'am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity' >/dev/null
+      sleep 3
+      HOME_AHORA=$(tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
+    fi
+    if [[ "$HOME_AHORA" != *com.gathin.tvhome* ]]; then
+      echo '  En Google TV esto suele significar que la pantalla de configuracion (setupwraith) tambien reclama'
+      echo '  el inicio: anadela a tu lista de limpieza (ver README, Solucion de problemas) y repite el instalador.'
+      falla "Se detiene aqui para no cerrar ADB con un inicio que no es el correcto (sigue resolviendo a '$HOME_AHORA'). Repite el instalador o usa desinstalar.sh."
+    fi
+    ok 'Recuperado: con los permisos de arranque concedidos, el inicio volvio a ser el nuevo launcher.'
+    return
   fi
   ok 'El televisor arranco bien tras reiniciar: el inicio sigue siendo el nuevo launcher.'
 }

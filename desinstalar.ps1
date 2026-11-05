@@ -14,6 +14,10 @@
 param([string]$TvIp = '')
 
 $ErrorActionPreference = 'Stop'
+# Ver el comentario junto a esta misma línea en instalar.ps1: en PowerShell 7.3+ esto evita que un comando
+# nativo (tv.py) que termine con código de salida distinto de cero tire abajo todo el script, aunque su
+# salida ya esté fundida con "2>&1". No hace nada en Windows PowerShell 5.1.
+$PSNativeCommandUseErrorActionPreference = $false
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $OutputEncoding = New-Object Text.UTF8Encoding $false
 

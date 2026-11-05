@@ -32,6 +32,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Solo en PowerShell 7.3+: por defecto, un comando nativo que termina con código de salida distinto de
+# cero se convierte en un error que detiene todo el script bajo $ErrorActionPreference = 'Stop', aunque su
+# salida ya esté fundida con "2>&1" (eso solo evita el mecanismo más antiguo, basado en lo que el comando
+# escribe, no este, basado en su código de salida). tv.py sale con 1 a propósito cuando la conexión se cae
+# -por ejemplo justo durante un "reboot"- y ya explica el motivo por su cuenta; eso no es razón para que
+# PowerShell 7 tire abajo el instalador entero. En Windows PowerShell 5.1 esta preferencia no existe:
+# fijarla aquí no hace nada, no es un error.
+$PSNativeCommandUseErrorActionPreference = $false
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest es 10 veces más lento con la barra de progreso
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
@@ -60,6 +68,7 @@ function Falla([string]$t) {
     Write-Host ''
     Write-Host "  [X] $t" -ForegroundColor Red
     Write-Host "      Registro completo: $Log" -ForegroundColor DarkGray
+    try { [Console]::Beep(880, 250) } catch { }
     try { Stop-Transcript | Out-Null } catch { }
     Read-Host '  Pulsa Enter para salir'
     exit 1
@@ -363,10 +372,14 @@ function Ping-Responde([string]$ip) {
 }
 # Espera hasta $minutos a que $listo devuelva $true, comprobando cada 5s. Mientras espera, recuerda si
 # el televisor llegó a responder en la red (aunque $listo no se cumpliera): eso distingue "sigue
-# arrancando, solo tarda" de "no reacciona nada" cuando se agota el tiempo.
+# arrancando, solo tarda" de "no reacciona nada" cuando se agota el tiempo. Un aviso cada 15s, no solo al
+# principio: un televisor de 1 GB de RAM (TCL y similares) puede tardar varios minutos en arrancar, y sin
+# esto el instalador se queda en silencio todo ese tiempo - exactamente lo que parece un script congelado.
 function Esperar-Televisor([int]$minutos, [scriptblock]$listo) {
     $script:ultimoVistoEnRed = $false
-    $fin = (Get-Date).AddSeconds($minutos * 60)
+    $inicio = Get-Date
+    $fin = $inicio.AddSeconds($minutos * 60)
+    $ultimoAviso = $inicio
     while ((Get-Date) -lt $fin) {
         Start-Sleep -Seconds 5
         if (-not $script:ultimoVistoEnRed -and (Ping-Responde $TvIp)) {
@@ -374,8 +387,17 @@ function Esperar-Televisor([int]$minutos, [scriptblock]$listo) {
             Write-Host '    (el televisor ya responde en la red; esperando a que termine de arrancar)' -ForegroundColor DarkGray
         }
         if (& $listo) { return $true }
+        if (((Get-Date) - $ultimoAviso).TotalSeconds -ge 15) {
+            $transcurrido = [int]((Get-Date) - $inicio).TotalSeconds
+            Write-Host "    (sigo esperando; ${transcurrido}s transcurridos de hasta $($minutos * 60)s) ..." -ForegroundColor DarkGray
+            $ultimoAviso = Get-Date
+        }
     }
     return $false
+}
+# Pita para que una pregunta no pase inadvertida si estás mirando el televisor y no esta ventana.
+function Avisar-Atencion {
+    try { [Console]::Beep(880, 250) } catch { }
 }
 # Reinicia el televisor con ADB todavía activo y comprueba que vuelve a arrancar con el nuevo launcher
 # como inicio, antes de aplicar el siguiente cambio. Si el televisor no responde, nunca cierra ADB por
@@ -399,6 +421,7 @@ function Reinicio-DeVerificacion([string]$titulo, [string]$motivo) {
         Write-Host '      - Si el televisor suele tardar en arrancar, dale un poco más de tiempo.' -ForegroundColor Yellow
         Write-Host '      - Si no reacciona, desenchúfalo 30 segundos y enchúfalo de nuevo: ADB seguía activo y' -ForegroundColor Yellow
         Write-Host '        nada se ha desinstalado, así que un corte de corriente no pierde ningún cambio.' -ForegroundColor Yellow
+        Avisar-Atencion
         if (-not (SiNo '  ¿Sigo esperando 3 minutos más?' $true)) {
             Falla 'Instalación detenida: el televisor no respondió tras el reinicio de comprobación.'
         }
@@ -411,9 +434,30 @@ function Reinicio-DeVerificacion([string]$titulo, [string]$motivo) {
     $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
     if ($homeAhora -notmatch 'com\.gathin\.tvhome') {
         Aviso "Tras reiniciar, el inicio ya no es el nuevo launcher (resolvió a '$homeAhora')."
-        Write-Host '  En Google TV esto suele significar que la pantalla de configuración (setupwraith) también reclama' -ForegroundColor Yellow
-        Write-Host '  el inicio: añádela a tu lista de limpieza (ver README, Solución de problemas) y repite el instalador.' -ForegroundColor Yellow
-        Falla 'Se detiene aquí para no cerrar ADB con un inicio que no es el correcto. Repite el instalador o usa desinstalar.ps1.'
+        # Placas TCL (TclAppBoot): el gestor de arranque del fabricante exige un permiso propio para dejar
+        # correr una app al arrancar; sin él, cada reinicio devuelve el inicio a su launcher de fábrica pase
+        # lo que pase con "set-home-activity". docs/devices/tcl-tc8000-ay30a2.md documenta el mismo síntoma
+        # y este arreglo (concederlo y volver a intentar), así que se prueba solo antes de rendirse.
+        if ($marca -match 'tcl') {
+            Write-Host '  Esto es un comportamiento conocido en algunas placas TCL: su gestor de arranque propio' -ForegroundColor Yellow
+            Write-Host '  exige un permiso especial para dejar correr una app nueva al arrancar. Probando a' -ForegroundColor Yellow
+            Write-Host '  concederlo y reintentando...' -ForegroundColor Yellow
+            Tv 'cmd appops set com.gathin.tvhome AUTO_START allow' | Out-Null
+            Tv 'cmd appops set com.gathin.tvhome APP_AUTO_START allow' | Out-Null
+            Tv 'cmd appops set com.gathin.tvhome APP_ASSOC_START allow' | Out-Null
+            Tv 'appops write-settings' | Out-Null
+            Tv 'cmd package set-home-activity --user 0 com.gathin.tvhome/.MainActivity' | Out-Null
+            Tv 'am start -W -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity' | Out-Null
+            Start-Sleep -Seconds 3
+            $homeAhora = Tv 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME'
+        }
+        if ($homeAhora -notmatch 'com\.gathin\.tvhome') {
+            Write-Host '  En Google TV esto suele significar que la pantalla de configuración (setupwraith) también reclama' -ForegroundColor Yellow
+            Write-Host '  el inicio: añádela a tu lista de limpieza (ver README, Solución de problemas) y repite el instalador.' -ForegroundColor Yellow
+            Falla "Se detiene aquí para no cerrar ADB con un inicio que no es el correcto (sigue resolviendo a '$homeAhora'). Repite el instalador o usa desinstalar.ps1."
+        }
+        Ok 'Recuperado: con los permisos de arranque concedidos, el inicio volvió a ser el nuevo launcher.'
+        return
     }
     Ok 'El televisor arrancó bien tras reiniciar: el inicio sigue siendo el nuevo launcher.'
 }
