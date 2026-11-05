@@ -257,12 +257,13 @@ tv() { TV_HOST="$TV_IP" TV_CONNECT_TIMEOUT_S="${TV_CONNECT_TIMEOUT_S:-120}" "$VE
 
 probar_adb() {
   local intentos="${1:-6}" espera="${2:-5}" i probe=''
+  # 20s por intento, no 120 en silencio (se ve igual que un script congelado aunque el televisor este
+  # bien) - pero solo aqui, exportado nada mas que para esta funcion: tv() ya toma TV_CONNECT_TIMEOUT_S si
+  # esta puesto, y puesto global tambien recortaria operaciones que de verdad necesitan mas de 20s (un
+  # "reboot", un lote de limpieza), haciendolas fallar con un error en vez de simplemente tardar.
   for ((i = 1; i <= intentos; i++)); do
-    # TV_CONNECT_TIMEOUT_S (fijado mas abajo) acota cada intento a unos segundos: sin esto, un intento
-    # podia quedarse hasta 120s sin imprimir nada, y eso se ve igual que un script congelado aunque el
-    # televisor estuviera bien.
-    printf "    (intento %s de %s; cada uno tarda hasta %ss) ...\n" "$i" "$intentos" "${TV_CONNECT_TIMEOUT_S:-120}"
-    probe=$(tv --probe); TV_OK=$?
+    printf "    (intento %s de %s; cada uno tarda hasta 20s) ...\n" "$i" "$intentos"
+    probe=$(TV_CONNECT_TIMEOUT_S=20 tv --probe); TV_OK=$?
     [ "$TV_OK" -eq 0 ] && break
     sleep "$espera"
   done

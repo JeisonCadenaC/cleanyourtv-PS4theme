@@ -64,6 +64,13 @@ function Falla([string]$t) {
     Read-Host '  Pulsa Enter para salir'
     exit 1
 }
+# Red de seguridad: sin esto, un error que ningún try/catch más concreto atrapa cierra la ventana al
+# instante con solo el texto rojo de PowerShell (o nada, si la ventana se cierra sola al terminar el
+# proceso) - exactamente lo que se ve como "el instalador se congela y se cierra". Con esto, cualquier
+# error que llegue hasta aquí pasa por Falla: se explica y la ventana espera a que pulses Enter.
+trap {
+    Falla "Error inesperado: $($_.Exception.Message)`n      $($_.InvocationInfo.PositionMessage)"
+}
 function Pregunta([string]$t, [string]$porDefecto = '') {
     $sufijo = if ($porDefecto) { " [$porDefecto]" } else { '' }
     $r = Read-Host "  ? $t$sufijo"
@@ -331,17 +338,25 @@ function Tv([string]$comando) {
     return ($out | Out-String).Trim()
 }
 function Probar-Adb([int]$intentos = 6, [int]$espera = 5) {
-    $probe = ''
-    for ($i = 1; $i -le $intentos; $i++) {
-        # TV_CONNECT_TIMEOUT_S (fijado más abajo) acota cada intento a unos segundos: sin esto, un
-        # intento podía quedarse hasta 120s sin imprimir nada, y eso se ve igual que un script congelado
-        # aunque el televisor estuviera bien.
-        Write-Host "    (intento $i de $intentos; cada uno tarda hasta $($env:TV_CONNECT_TIMEOUT_S)s) ..." -ForegroundColor DarkGray
-        $probe = Tv '--probe'
-        if ($tvCodigo -eq 0) { break }
-        Start-Sleep -Seconds $espera
+    # TV_CONNECT_TIMEOUT_S acota cada intento a 20s en vez de hasta 120s en silencio, que se ve igual que
+    # un script congelado aunque el televisor esté bien. Solo aquí, no en todo el script: puesto global
+    # también recortaba operaciones que de verdad necesitan más de 20s (como esperar la respuesta de un
+    # "reboot"), haciéndolas fallar con un error en vez de simplemente tardar.
+    $anterior = $env:TV_CONNECT_TIMEOUT_S
+    $env:TV_CONNECT_TIMEOUT_S = '20'
+    try {
+        $probe = ''
+        for ($i = 1; $i -le $intentos; $i++) {
+            Write-Host "    (intento $i de $intentos; cada uno tarda hasta 20s) ..." -ForegroundColor DarkGray
+            $probe = Tv '--probe'
+            if ($tvCodigo -eq 0) { break }
+            Start-Sleep -Seconds $espera
+        }
+        return $probe
+    } finally {
+        if ($null -eq $anterior) { Remove-Item Env:\TV_CONNECT_TIMEOUT_S -ErrorAction SilentlyContinue }
+        else { $env:TV_CONNECT_TIMEOUT_S = $anterior }
     }
-    return $probe
 }
 function Ping-Responde([string]$ip) {
     try { return ((New-Object Net.NetworkInformation.Ping).Send($ip, 800).Status -eq 'Success') } catch { return $false }
@@ -440,11 +455,9 @@ if (-not $TvIp) {
 }
 if ($TvIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Falla "'$TvIp' no parece una dirección IP." }
 $env:TV_HOST = $TvIp
-# Sin esto, tools\tv.py espera hasta 120s por intento para conectar, sin imprimir nada mientras tanto:
-# en una conexión lenta o justo tras un reinicio, eso se ve exactamente igual que un script congelado,
-# aunque el televisor esté bien. 20s de margen por intento es de sobra en una red local, y los reintentos
-# del propio instalador cubren el resto de la espera, con un mensaje antes de cada uno.
-$env:TV_CONNECT_TIMEOUT_S = '20'
+# TV_CONNECT_TIMEOUT_S no se fija aquí de forma global: afecta a toda operación con el televisor, no solo
+# a la conexión, y una operación que de verdad necesita más de unos segundos (un "reboot", un lote de
+# limpieza) fallaría con un error en vez de simplemente tardar. Probar-Adb lo acota solo mientras reintenta.
 
 if (-not (Puerto-Abierto $TvIp 5555 1500)) {
     Aviso "El puerto 5555 de $TvIp está cerrado."
